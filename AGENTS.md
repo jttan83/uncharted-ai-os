@@ -2,6 +2,18 @@
 
 This file provides guidance to AI coding agents when working with code in this repository.
 
+## Uncharted AI OS fork-specific guidance
+
+Before changing any Uncharted AI OS functionality, read:
+
+- `docs/uncharted-ai-os/DOMAIN_MODEL.md`
+- `docs/uncharted-ai-os/ARCHITECTURE.md`
+
+These documents define the fork-specific product language, domain boundaries,
+and architecture decisions. In particular, keep the Uncharted Capability Map's
+business graph separate from Langflow's technical flow graph. This guidance
+supplements the upstream Langflow instructions below; it does not replace them.
+
 ## Project Overview
 
 Langflow is a visual workflow builder for AI-powered agents. It has a Python/FastAPI backend, React/TypeScript frontend, and a lightweight executor CLI (lfx).
