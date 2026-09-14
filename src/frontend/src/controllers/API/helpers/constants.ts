@@ -19,6 +19,7 @@ export const URLs = {
   REFRESH: "refresh",
   BUILD: `build`,
   CUSTOM_COMPONENT: `custom_component`,
+  CAPABILITIES: `capabilities`,
   FLOWS: `flows`,
   FOLDERS: `projects`,
   PROJECTS: `projects`,

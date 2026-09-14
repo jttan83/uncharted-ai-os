@@ -46,6 +46,8 @@ const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
 
 const PlaygroundPage = lazy(() => import("./pages/Playground"));
 
+const CapabilitiesPage = lazy(() => import("./pages/CapabilitiesPage"));
+
 const SignUp = lazy(() => import("./pages/SignUpPage"));
 
 const router = createBrowserRouter(
@@ -140,6 +142,7 @@ const router = createBrowserRouter(
                     />
                   </Route>
                 </Route>
+                <Route path="capabilities" element={<CapabilitiesPage />} />
                 <Route path="settings" element={<SettingsPage />}>
                   <Route
                     index

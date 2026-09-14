@@ -14,6 +14,13 @@
       "ready": [{ "testId": "mainpage_title" }]
     },
     {
+      "id": "capabilities",
+      "path": "/capabilities",
+      "surface": "Capability Map",
+      "requiresMainContent": true,
+      "ready": [{ "testId": "capabilities-page" }]
+    },
+    {
       "id": "components",
       "path": "/components",
       "surface": "Components list",
