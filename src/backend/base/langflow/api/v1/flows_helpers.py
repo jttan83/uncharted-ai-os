@@ -495,15 +495,12 @@ async def _read_flow(
     ``ensure_flow_permission`` decides access. Otherwise the query stays
     owner-scoped so the OSS pass-through default cannot widen visibility.
     """
-    from langflow.services.authorization.fetch import authorized_or_owner_scoped
+    from langflow.services.authorization.flow_access import load_flow_for_authorization
 
-    return await authorized_or_owner_scoped(
+    return await load_flow_for_authorization(
         session,
-        Flow,
-        id_column=Flow.id,
-        resource_id=flow_id,
-        owner_column=Flow.user_id,
-        owner_id=user_id,
+        flow_id=flow_id,
+        user_id=user_id,
         for_update=for_update,
     )
 

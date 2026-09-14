@@ -11,6 +11,7 @@ from langflow.api.utils import CurrentActiveUser, DbSession
 from langflow.api.v1.flows_helpers import _canonicalize_flow_destination, _read_flow
 from langflow.services.authorization import FlowAction, ensure_flow_permission
 from langflow.services.authorization.fetch import deny_to_404
+from langflow.services.authorization.flow_access import FlowReadUnavailableError, resolve_authorized_flow_for_read
 from langflow.services.database.models.flow.model import Flow, FlowCreate
 from langflow.services.database.models.folder.model import Folder
 
@@ -63,7 +64,14 @@ async def get_authorized_flow_for_read(
     session: DbSession,
 ) -> Flow:
     """Return a flow the caller may read (404 when denied or missing)."""
-    return await _get_authorized_flow(FlowAction.READ, flow_id=flow_id, current_user=current_user, session=session)
+    try:
+        return await resolve_authorized_flow_for_read(
+            session,
+            flow_id=flow_id,
+            current_user=current_user,
+        )
+    except FlowReadUnavailableError as exc:
+        raise HTTPException(status_code=404, detail="Flow not found") from exc
 
 
 async def get_authorized_flow_for_write(
