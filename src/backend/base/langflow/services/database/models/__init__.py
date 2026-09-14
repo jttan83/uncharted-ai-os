@@ -20,6 +20,7 @@ from .auth import (
     encrypt_sso_client_secret,
     is_sso_client_secret_envelope,
 )
+from .capability import Capability
 from .catalog_policy import CatalogPolicyMode, CatalogPolicyRule, CatalogPolicyScope, CatalogResourceKind
 from .deployment import Deployment
 from .deployment_provider_account import DeploymentProviderAccount
@@ -52,6 +53,7 @@ __all__ = [
     "AuthzShare",
     "AuthzTeam",
     "AuthzTeamMember",
+    "Capability",
     "CasbinRule",
     "CatalogPolicyMode",
     "CatalogPolicyRule",
