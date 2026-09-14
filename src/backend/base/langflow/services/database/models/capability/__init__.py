@@ -1,4 +1,5 @@
 from .constants import CapabilityMaturity, CapabilityStatus, FrequencyPeriod, HumanOversight
+from .model import Capability
 from .schema import (
     CapabilityCreate,
     CapabilityListResponse,
@@ -12,6 +13,7 @@ from .schema import (
 from .validation import has_substantive_assessment_data
 
 __all__ = [
+    "Capability",
     "CapabilityCreate",
     "CapabilityListResponse",
     "CapabilityMaturity",
