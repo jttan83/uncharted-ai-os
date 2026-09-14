@@ -8,6 +8,16 @@ from sqlmodel import col, func, select
 from langflow.services.database.models.user.model import User
 
 from .constants import ASSESSMENT_BEARING_FIELDS, CapabilityStatus
+from .errors import (
+    CapabilityConflictError,
+    CapabilityDomainError,
+    CapabilityFlowNotAccessibleError,
+    CapabilityHierarchyConflictError,
+    CapabilityNotFoundError,
+    CapabilityValidationError,
+    ParentCapabilityNotFoundError,
+)
+from .flow_access import authorize_primary_flow_link, validate_capability_user_context
 from .model import Capability
 from .schema import CapabilityCreate, CapabilityUpdate
 from .validation import has_substantive_assessment_data, validate_frequency_pair
@@ -19,8 +29,26 @@ if TYPE_CHECKING:
     from sqlmodel.ext.asyncio.session import AsyncSession
     from sqlmodel.sql.expression import SelectOfScalar
 
+    from langflow.services.database.models.user.model import UserRead
+
 
 MAX_CAPABILITY_LIST_LIMIT = 200
+
+__all__ = [
+    "CapabilityConflictError",
+    "CapabilityDomainError",
+    "CapabilityFlowNotAccessibleError",
+    "CapabilityHierarchyConflictError",
+    "CapabilityNotFoundError",
+    "CapabilityValidationError",
+    "ParentCapabilityNotFoundError",
+    "archive_capability",
+    "create_capability",
+    "get_capability",
+    "list_capabilities",
+    "restore_capability",
+    "update_capability",
+]
 
 _CAPABILITY_NOT_FOUND = "Capability not found"
 _PARENT_NOT_FOUND = "Parent Capability not found"
@@ -29,7 +57,6 @@ _HIERARCHY_CYCLE_ERROR = "Capability hierarchy cycle detected"
 _INCONSISTENT_HIERARCHY_ERROR = "Capability hierarchy is inconsistent"
 _ARCHIVED_PARENT_ERROR = "An active Capability cannot have an archived parent"
 _ACTIVE_CHILDREN_ERROR = "Capability cannot be archived while it has active children"
-_FLOW_LINK_VALIDATION_ERROR = "A non-null primary Flow link requires Phase 1A.5 Flow read validation"
 _EMPTY_UPDATE_ERROR = "Capability update must contain at least one field"
 _INVALID_OFFSET_ERROR = "offset must be greater than or equal to zero"
 _INVALID_LIMIT_ERROR = f"limit must be between 1 and {MAX_CAPABILITY_LIST_LIMIT}"
@@ -56,34 +83,6 @@ MUTABLE_CAPABILITY_FIELDS = (
     "tools",
     "primary_flow_id",
 )
-
-
-class CapabilityDomainError(Exception):
-    """Base class for Capability errors translated at the future API boundary."""
-
-
-class CapabilityNotFoundError(CapabilityDomainError):
-    """Raised when an owner-scoped Capability lookup has no result."""
-
-
-class ParentCapabilityNotFoundError(CapabilityNotFoundError):
-    """Raised when a proposed parent is absent from the owner's Capability map."""
-
-
-class CapabilityValidationError(CapabilityDomainError):
-    """Raised when a requested Capability mutation is invalid."""
-
-
-class CapabilityConflictError(CapabilityDomainError):
-    """Raised when a requested Capability mutation conflicts with hierarchy state."""
-
-
-class CapabilityHierarchyConflictError(CapabilityConflictError):
-    """Raised when hierarchy or archive invariants block a mutation."""
-
-
-class CapabilityFlowLinkValidationRequiredError(CapabilityValidationError):
-    """Raised until Phase 1A.5 supplies authorized non-null Flow link validation."""
 
 
 def _utc_now() -> datetime:
@@ -250,21 +249,26 @@ async def _ensure_no_active_children(
         raise CapabilityHierarchyConflictError(_ACTIVE_CHILDREN_ERROR)
 
 
-def _reject_unvalidated_flow_link(primary_flow_id: UUID | None) -> None:
-    if primary_flow_id is not None:
-        raise CapabilityFlowLinkValidationRequiredError(_FLOW_LINK_VALIDATION_ERROR)
-
-
 async def create_capability(
     session: AsyncSession,
     *,
     owner_id: UUID,
     payload: CapabilityCreate,
+    current_user: User | UserRead | None = None,
 ) -> Capability:
     """Create an owner-scoped Capability without committing the transaction."""
+    validate_capability_user_context(owner_id=owner_id, current_user=current_user)
     create_values = payload.model_dump()
-    _reject_unvalidated_flow_link(create_values["primary_flow_id"])
     _validate_effective_frequency(create_values)
+
+    primary_flow_id = create_values["primary_flow_id"]
+    if primary_flow_id is not None:
+        create_values["primary_flow_id"] = await authorize_primary_flow_link(
+            session,
+            primary_flow_id=primary_flow_id,
+            owner_id=owner_id,
+            current_user=current_user,
+        )
 
     parent_id = create_values["parent_capability_id"]
     if parent_id is not None:
@@ -301,8 +305,10 @@ async def update_capability(
     capability_id: UUID,
     owner_id: UUID,
     payload: CapabilityUpdate,
+    current_user: User | UserRead | None = None,
 ) -> Capability:
     """Apply an owner-scoped PATCH without committing the transaction."""
+    validate_capability_user_context(owner_id=owner_id, current_user=current_user)
     supplied_fields = payload.model_fields_set
     hierarchy_requested = bool(supplied_fields & {"parent_capability_id", "status"})
     if hierarchy_requested:
@@ -320,8 +326,13 @@ async def update_capability(
         raise CapabilityValidationError(_EMPTY_UPDATE_ERROR)
 
     update_values = payload.model_dump(exclude_unset=True)
-    if "primary_flow_id" in supplied_fields:
-        _reject_unvalidated_flow_link(update_values["primary_flow_id"])
+    if "primary_flow_id" in supplied_fields and update_values["primary_flow_id"] is not None:
+        update_values["primary_flow_id"] = await authorize_primary_flow_link(
+            session,
+            primary_flow_id=update_values["primary_flow_id"],
+            owner_id=owner_id,
+            current_user=current_user,
+        )
 
     effective_state = {field_name: getattr(capability, field_name) for field_name in MUTABLE_CAPABILITY_FIELDS}
     effective_state.update(update_values)

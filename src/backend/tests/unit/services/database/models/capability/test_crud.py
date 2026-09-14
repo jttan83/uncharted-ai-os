@@ -14,7 +14,6 @@ from langflow.services.database.models.capability.constants import (
     HumanOversight,
 )
 from langflow.services.database.models.capability.crud import (
-    CapabilityFlowLinkValidationRequiredError,
     CapabilityHierarchyConflictError,
     CapabilityNotFoundError,
     CapabilityValidationError,
@@ -232,11 +231,13 @@ async def test_active_create_under_archived_parent_fails_but_archived_create_suc
     assert child.status == CapabilityStatus.ARCHIVED
 
 
-async def test_create_allows_null_flow_link_and_defers_non_null_flow_link(async_session: AsyncSession) -> None:
+async def test_create_allows_null_flow_link_and_requires_context_for_non_null_flow_link(
+    async_session: AsyncSession,
+) -> None:
     owner = await _create_user(async_session)
 
     assert (await _create(async_session, owner, primary_flow_id=None)).primary_flow_id is None
-    with pytest.raises(CapabilityFlowLinkValidationRequiredError, match=r"Phase 1A\.5"):
+    with pytest.raises(CapabilityValidationError, match="Authenticated user context is required"):
         await _create(async_session, owner, name="Linked", primary_flow_id=uuid4())
 
 
@@ -651,7 +652,7 @@ async def test_work_economics_only_update_does_not_stamp_assessment(async_sessio
     assert capability.assessed_by is None
 
 
-async def test_flow_link_patch_boundary_preserves_omitted_link_allows_clear_and_rejects_non_null(
+async def test_flow_link_patch_boundary_preserves_omitted_link_allows_clear_and_requires_context_for_non_null(
     async_session: AsyncSession,
 ) -> None:
     owner = await _create_user(async_session)
@@ -676,7 +677,7 @@ async def test_flow_link_patch_boundary_preserves_omitted_link_allows_clear_and_
     )
     assert capability.primary_flow_id is None
 
-    with pytest.raises(CapabilityFlowLinkValidationRequiredError, match=r"Phase 1A\.5"):
+    with pytest.raises(CapabilityValidationError, match="Authenticated user context is required"):
         await update_capability(
             async_session,
             capability_id=capability.id,
