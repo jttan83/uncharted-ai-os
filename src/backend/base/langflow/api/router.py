@@ -14,6 +14,7 @@ from langflow.api.v1 import (
     authz_roles_router,
     authz_shares_router,
     authz_teams_router,
+    capabilities_router,
     catalog_policy_router,
     chat_router,
     endpoints_router,
@@ -104,6 +105,7 @@ router_v1.include_router(authz_roles_router)
 router_v1.include_router(authz_role_assignments_router)
 router_v1.include_router(authz_teams_router)
 router_v1.include_router(authz_me_router)
+router_v1.include_router(capabilities_router)
 router_v1.include_router(catalog_policy_router)
 
 
