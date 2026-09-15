@@ -1,15 +1,19 @@
 # Uncharted AI OS Architecture
 
-Status: V0.1 architecture decisions. This document defines the intended
-boundaries for future implementation. It does not claim that the Capability Map
-runtime, persistence, APIs, or frontend routes already exist.
+Status: architecture boundary record. The V0.1 Capability foundation described
+here is implemented by Phase 1A and Phase 1B. Post-V0.1 Role, execution,
+evaluation, outcome, and learning architecture is planned and specified in
+[AI_ROLE_AND_LEARNING_ARCHITECTURE.md](./AI_ROLE_AND_LEARNING_ARCHITECTURE.md).
 
 Read [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) before changing these boundaries.
 
 ## Architectural intent
 
-Uncharted AI OS adds a business capability-mapping product layer above
-Langflow. Langflow remains the technical workflow builder and execution engine.
+Uncharted AI OS owns the organisational work, accountability, quality,
+performance, and learning layer above Langflow. Langflow remains the technical
+workflow builder and execution engine.
+
+The implemented V0.1 boundary is:
 
 ```text
 Uncharted Capability Map
@@ -36,15 +40,90 @@ The two graphs may be connected, but they are not merged:
 | Uncharted AI OS owns | Langflow owns |
 | --- | --- |
 | Business capability mapping | Workflow execution |
-| Current AI maturity | Agents |
+| Current AI maturity | Technical agent components and runtime |
 | Target AI maturity | Model providers |
 | Human oversight | Tool integrations |
 | Business value | Flow APIs |
-| AI feasibility | Execution history |
+| AI feasibility | Technical Flow execution history |
 | AI execution risk | Permissions around Flow execution |
 | Work effort and frequency | Technical flow graph persistence |
 | Capability decomposition hierarchy | Flow builder and component semantics |
 | Links from capabilities to Langflow flows | Runtime streaming, background execution, and HITL mechanics |
+| World-Class Role accountability and benchmarks (planned) | Technical graph composition |
+| Outcome Contracts and quality standards (planned) | Provider-specific model invocation |
+| Run, Artifact, Outcome, and feedback context (planned) | Authorized execution of linked Flows |
+| Eval, Experiment, Playbook, and performance governance (planned) | Low-level execution events and component results |
+
+“Agent” is therefore context-sensitive and must be qualified. Uncharted AI OS
+may govern a planned Agent configuration acting for a professional Role;
+Langflow owns the technical agent components and their execution. Neither is a
+Capability, and neither changes Langflow Flow semantics.
+
+## Post-V0.1 target architecture
+
+The long-term product loop is:
+
+```text
+MAP WORK
+→ ASSIGN WORLD-CLASS ACCOUNTABILITY
+→ EXECUTE
+→ EVALUATE QUALITY
+→ HUMAN APPROVAL WHERE REQUIRED
+→ DELIVER
+→ MEASURE REAL-WORLD OUTCOMES
+→ LEARN
+→ EXPERIMENT
+→ UPDATE PLAYBOOK
+→ REGRESSION EVAL
+→ EXECUTE AGAIN
+```
+
+The conceptual target contains these distinct layers:
+
+1. Capability Map.
+2. World-Class Role Registry.
+3. Outcome Contracts.
+4. AI Chief of Staff / Manager.
+5. Specialist Agents.
+6. Execution Engine: Langflow, tools, model providers, and deterministic code.
+7. Quality / Eval Engine.
+8. Human Approval.
+9. Artifact / Run history.
+10. Outcome Telemetry.
+11. Feedback System.
+12. Learning / Experiment Engine.
+13. Versioned Playbooks.
+14. Stable, episodic, and performance memory.
+15. AI Performance Director.
+16. Observability and traceability.
+
+The Capability Map remains the foundation; these layers do not replace or
+merge it with the Flow graph. They are conceptual boundaries, not a database
+schema or claim of current functionality. Candidate persistence must be proven
+through the first Role vertical slice before generalisation.
+
+Six rules constrain every later phase:
+
+- AI is benchmarked against a structured world-class professional standard,
+  not against its ability to produce any technically valid output.
+- Every Capability has exactly one accountable World-Class Role in the initial
+  architecture; supporting Roles and Agents do not make accountability shared
+  or ambiguous.
+- Agents are assigned performance accountability for outcomes, not merely for
+  producing outputs. Humans retain legal, ethical, and organisational
+  accountability.
+- Generation is not delivery. Structured quality gates, evidence checks, and
+  required approval sit between them.
+- The first Role vertical slice cannot independently deliver or publish,
+  spend, enter commitments, perform destructive or material security actions,
+  or materially promote a Playbook without an explicitly authorized human
+  approval path.
+- A Capability cannot move from `ai_assisted` to `ai_executable` without an
+  appropriate evaluation suite and promotion evidence.
+
+The canonical operating principles, risks, safeguards, vertical slice, and
+conservative phasing are defined in the future-architecture document rather
+than duplicated here.
 
 ## Architecture decisions
 

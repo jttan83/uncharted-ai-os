@@ -1,19 +1,23 @@
 # Uncharted AI OS Domain Model
 
-Status: V0.1 product and domain decisions. This document defines the language
-and data concepts that implementation work must preserve. It does not describe
-functionality that is already implemented.
+Status: V0.1 product and domain contract. Phase 1A and Phase 1B implement the
+Capability foundation described here. Planned post-V0.1 concepts are named
+only to protect their boundaries; their detailed design lives in
+[AI_ROLE_AND_LEARNING_ARCHITECTURE.md](./AI_ROLE_AND_LEARNING_ARCHITECTURE.md).
 
 ## Product definition
 
-Uncharted AI OS is a visual map of real business work that helps organisations:
+Uncharted AI OS is a system that maps the real work an organisation performs,
+benchmarks AI against world-class professional standards, executes that work,
+evaluates the quality of the output, measures real-world outcomes, learns from
+human feedback and performance data, and continuously improves the AI
+organisation based on evidence.
 
-1. Map repeatable business work.
-2. Assess current AI maturity.
-3. Define an appropriate target AI maturity.
-4. Understand business value, AI feasibility, and AI execution risk.
-5. Identify required human oversight.
-6. Connect selected capabilities to executable Langflow workflows.
+The implemented V0.1 surface is deliberately narrower: it maps repeatable
+business work, records its assessment and oversight context, and can connect a
+Capability to an optional authorized Langflow Flow. Execution, evaluation,
+outcome measurement, Roles, Playbooks, learning, and experimentation remain
+planned architecture rather than V0.1 functionality.
 
 Langflow remains the workflow and execution engine underneath Uncharted AI OS.
 The Uncharted Capability Map is a business graph. It is separate from
@@ -29,11 +33,39 @@ Use this term consistently. A Capability is not:
 
 - A single execution, run, or job.
 - An ambiguous AI skill or model feature.
+- A professional Role or accountability assignment.
+- An Agent configuration or reasoning actor.
 - A Langflow Flow.
+- An Artifact, Outcome, Playbook, Eval, or Experiment.
 - A department, team, project, or folder.
 
 A Capability may be supported or implemented by a Langflow Flow, but the two
 remain different domain objects with different lifecycles and responsibilities.
+
+## Adjacent concepts beyond V0.1
+
+The following terms protect future boundaries. They do not add fields, tables,
+APIs, or runtime behaviour to V0.1.
+
+| Concept | Meaning | Relationship to Capability |
+| --- | --- | --- |
+| **Role** | Professional accountability, such as `Editorial & Content Director`. | A Role may be accountable for multiple Capabilities. |
+| **Capability** | Repeatable business work that produces a meaningful outcome. | The existing V0.1 business object and map node. |
+| **Agent** | A runtime AI configuration or reasoning actor that performs, coordinates, or evaluates work. | An Agent may act for a Role on a Capability but is not the Role or Capability. |
+| **Workflow** | The technical sequence of models, tools, code, and actions used to execute work. | A Langflow Flow may implement or support a Capability through the existing optional link. |
+| **Run** | One execution instance of a Capability. | A Run records what happened once; it is not a reusable Capability definition. |
+| **Artifact** | A work product created during a Run, such as a script, proposal, report, or workshop design. | A Capability describes expected outputs; an Artifact is an actual instance. |
+| **Outcome** | What happened after an Artifact was used in the real world. | Outcome evidence is temporally and causally distinct from the Artifact and its quality. |
+| **Playbook** | Versioned operating knowledge or method used by a Role or Capability. | A Playbook may guide execution without becoming the Capability or Workflow. |
+| **Eval** | A repeatable test of whether AI behaviour or an Artifact meets defined standards. | An evaluation suite supplies promotion and regression evidence for a Capability. |
+| **Experiment** | A controlled hypothesis test intended to improve future performance. | Experiment evidence may support a proposed Playbook or configuration change. |
+
+In the initial post-V0.1 architecture, every Capability has exactly one
+accountable World-Class Role. Other Roles or Agents may support execution,
+research, critique, or evaluation, but they do not share that accountability.
+For the first vertical slice, `Talking-Head Content Development` is accountable
+to the `Editorial & Content Director`. Generalized many-to-many Role assignment
+persistence is deferred until real use proves it necessary.
 
 ## Capability fields
 
@@ -120,6 +152,14 @@ Allowed maturity values are:
 Maturity is descriptive, not a ranking of quality. `automated` is not inherently
 better than `ai_assisted`, and a target should reflect the appropriate operating
 model rather than the highest available label.
+
+Future maturity decisions must use the relevant World-Class Role benchmark,
+not mere technical output generation. In particular, movement from
+`ai_assisted` to `ai_executable` requires an appropriate evaluation suite and
+evidence that the Capability can meet its acceptable professional standard
+with the stated human review or approval. `automated` means routine human
+intervention has become exceptional; it does not mean oversight, escalation,
+or accountability disappears. Some Capabilities should remain human-led.
 
 `target_maturity` may be null when no target has been agreed. Use
 `not_assessed`, rather than a null `current_maturity`, to represent the explicit

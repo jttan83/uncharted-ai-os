@@ -1,11 +1,14 @@
 # Uncharted AI OS V0.1 Implementation Specification
 
-Status: approved implementation contract for Phase 1. This document describes
-work to be implemented later; no runtime code or migration is part of this
-documentation change.
+Status: implemented contract for Phase 1A and Phase 1B. This document preserves
+the V0.1 Capability foundation and read-only SkillTree scope; it does not imply
+that later Role, Run, Artifact, Outcome, Eval, Playbook, or learning layers are
+implemented.
 
 Read [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) and
 [ARCHITECTURE.md](./ARCHITECTURE.md) before using this specification.
+Post-V0.1 direction is defined separately in
+[AI_ROLE_AND_LEARNING_ARCHITECTURE.md](./AI_ROLE_AND_LEARNING_ARCHITECTURE.md).
 
 ## 1. Outcome and boundaries
 
