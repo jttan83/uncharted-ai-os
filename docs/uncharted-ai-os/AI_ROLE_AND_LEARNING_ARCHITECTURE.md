@@ -1100,6 +1100,9 @@ cost/latency budgets, and a Capability-specific evidence policy and promotion
 threshold. Establish a human baseline and privacy/retention plan before
 collecting new data; do not create a universal numeric evidence threshold.
 
+The Phase 1E Capability and evaluation specification is defined in
+[TALKING_HEAD_CONTENT_DEVELOPMENT.md](./capabilities/TALKING_HEAD_CONTENT_DEVELOPMENT.md).
+
 ### Phase 1F — Instrumented, approval-gated prototype
 
 Prototype one draft → evaluate → revise/escalate → human approval loop using
