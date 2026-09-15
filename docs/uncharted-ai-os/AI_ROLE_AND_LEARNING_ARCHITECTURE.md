@@ -1088,6 +1088,9 @@ boundaries, approval expectations, benchmark sources, and representative
 excellent/weak examples. Confirm it as the single accountable Role for the
 primary Capability. Do not build a general Role registry yet.
 
+The Phase 1D Role profile is specified in
+[EDITORIAL_CONTENT_DIRECTOR.md](./roles/EDITORIAL_CONTENT_DIRECTOR.md).
+
 ### Phase 1E — Talking-Head Outcome Contract and Eval design
 
 Define the primary outcome, quality rubric with anchored dimensions, metrics,
