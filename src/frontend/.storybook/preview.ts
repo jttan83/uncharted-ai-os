@@ -1,4 +1,5 @@
 import type { Preview } from "@storybook/react-vite";
+import "@xyflow/react/dist/style.css";
 import * as React from "react";
 import { useEffect } from "react";
 // Import all CSS files to match the app's styling
