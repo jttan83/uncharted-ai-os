@@ -14,6 +14,38 @@ and architecture decisions. In particular, keep the Uncharted Capability Map's
 business graph separate from Langflow's technical flow graph. This guidance
 supplements the upstream Langflow instructions below; it does not replace them.
 
+## Mandatory Final Report
+
+Every Codex task must end with a concise, self-contained final report that can
+be copied directly into ChatGPT for architecture or code review. The report
+must:
+
+1. Summarize what was done.
+2. List files created.
+3. List files modified.
+4. List important design or implementation decisions.
+5. Report tests and checks run, including their results.
+6. Report failures, warnings, and unresolved issues.
+7. Report architectural risks or decisions still needing review.
+8. State whether runtime behaviour changed.
+9. State whether database, schema, or migrations changed.
+10. State whether dependencies changed.
+11. Report `git diff --check`.
+12. Report `git diff --stat`.
+13. Report `git status --short --untracked-files=all`.
+14. Explicitly state whether a commit was created.
+15. If no commit was requested, do not commit.
+
+Standing behaviours:
+
+- Never require the user to ask separately for the final report.
+- Do not finish with only raw command output; explain the outcome.
+- Do not automatically commit unless the task explicitly authorizes a commit.
+- Preserve task-specific final-report requirements in addition to this
+  standard report.
+- If a task has numbered requested outputs, include them in the final report.
+- Keep the final report concise but complete.
+
 ## Project Overview
 
 Langflow is a visual workflow builder for AI-powered agents. It has a Python/FastAPI backend, React/TypeScript frontend, and a lightweight executor CLI (lfx).
