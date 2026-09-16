@@ -58,7 +58,7 @@ def test_evaluator_result_is_bound_to_exact_package(case_brief, editorial_packag
         validate_evaluation_binding(evaluation, changed, case_brief)
 
 
-def test_cli_parser_exposes_only_inspection_commands() -> None:
+def test_cli_parser_preserves_inspection_commands() -> None:
     parser = build_parser()
     parsed = parser.parse_args(["validate-case", "case.json"])
     assert parsed.command == "validate-case"

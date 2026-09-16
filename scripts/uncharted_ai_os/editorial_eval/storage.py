@@ -21,6 +21,10 @@ class StorageSafetyError(RuntimeError):
     """Raised when a storage operation would cross an experiment boundary."""
 
 
+class StorageRecordExistsError(StorageSafetyError):
+    """Raised when an immutable private record already exists."""
+
+
 class PrivateExperimentStorage:
     """Atomic, permission-restricted JSON storage under the one allowed root."""
 
@@ -61,6 +65,35 @@ class PrivateExperimentStorage:
             if temporary_path.exists():
                 temporary_path.unlink()
             raise
+        return destination
+
+    def write_json_once(self, relative_path: str | Path, value: BaseModel | Any) -> Path:
+        """Atomically create canonical JSON without replacing historical evidence."""
+        destination = self._confined_path(relative_path)
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._verify_no_symlink_path(destination.parent)
+        self._restrict_directory(destination.parent)
+        payload = canonical_json_bytes(value) + b"\n"
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                os.link(temporary_path, destination)
+            except FileExistsError as exc:
+                msg = f"immutable experiment record already exists: {relative_path}"
+                raise StorageRecordExistsError(msg) from exc
+            destination.chmod(0o600)
+            self._fsync_directory(destination.parent)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
         return destination
 
     def read_json(self, relative_path: str | Path) -> Any:

@@ -55,6 +55,7 @@ class InvocationModelConfig(StrictModel):
     seed: int | None = None
     max_output_tokens: int = Field(gt=0)
     timeout_seconds: int = Field(gt=0)
+    provider_internal_retries: Literal[0] = 0
 
     @model_validator(mode="after")
     def reject_sensitive_configuration(self) -> InvocationModelConfig:
@@ -233,13 +234,13 @@ class LangChainModelInvoker:
             )
         except Exception as exc:  # noqa: BLE001  # External SDK exceptions vary by provider.
             latency_ms = round((time.perf_counter() - started) * 1000)
-            retryable = isinstance(exc, (ConnectionError, TimeoutError))
+            failure_type, retryable = _classify_invocation_failure(exc, provider=model_config.provider)
             return ModelResponse[OutputT](
                 usage=ResourceUsage(),
                 latency_ms=latency_ms,
                 attempt_number=attempt_number,
                 failure=FailureInfo(
-                    failure_type="model_invocation_failure",
+                    failure_type=failure_type,
                     safe_message="Model invocation failed; provider details were suppressed.",
                     retryable=retryable,
                     diagnostics=_exception_diagnostics(
@@ -259,6 +260,7 @@ def build_langchain_parameters(model_config: InvocationModelConfig) -> dict[str,
         "temperature": model_config.temperature,
         "max_tokens": model_config.max_output_tokens,
         "timeout": model_config.timeout_seconds,
+        "max_retries": model_config.provider_internal_retries,
     }
     if model_config.seed is not None:
         parameters["seed"] = model_config.seed
@@ -275,11 +277,34 @@ def preflight_langchain_model_config(model_config: InvocationModelConfig) -> dic
     model = init_chat_model(model=model_config.model_identifier, model_provider=model_config.provider, **parameters)
     defaults = getattr(model, "_default_params", {})
     normalized = {
-        key: value
-        for key, value in defaults.items()
-        if key in {"model", "temperature", "max_tokens", "max_completion_tokens", "timeout", "seed", "reasoning_effort"}
+        "model": defaults.get("model"),
+        "reasoning_effort": defaults.get("reasoning_effort"),
+        "temperature": getattr(model, "temperature", None),
+        "seed": defaults.get("seed"),
+        "max_completion_tokens": defaults.get("max_completion_tokens"),
+        "timeout": getattr(model, "request_timeout", None),
+        "max_retries": getattr(model, "max_retries", None),
     }
     return assert_json_safe(normalized)  # type: ignore[return-value]
+
+
+def _classify_invocation_failure(exc: BaseException, *, provider: str) -> tuple[str, bool]:
+    """Translate provider exceptions into provider-neutral workflow semantics."""
+    if provider.casefold() == "openai":
+        try:
+            from openai import APIConnectionError, APITimeoutError
+        except ImportError:  # pragma: no cover - the configured provider package is installed in production.
+            pass
+        else:
+            if isinstance(exc, APITimeoutError):
+                return "infrastructure_timeout", True
+            if isinstance(exc, APIConnectionError):
+                return "infrastructure_connection_error", True
+    if isinstance(exc, TimeoutError):
+        return "infrastructure_timeout", True
+    if isinstance(exc, ConnectionError):
+        return "infrastructure_connection_error", True
+    return "model_invocation_failure", False
 
 
 def _exception_diagnostics(

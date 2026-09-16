@@ -199,15 +199,23 @@ class _CallTracker:
             )
             if response.parsed is not None:
                 self.parsed_results.append((role, response.parsed))
-            self._enforce_resource_limits()
+            try:
+                self._enforce_resource_limits()
+            except WorkflowExecutionError:
+                if response.failure is not None and response.failure.retryable:
+                    self._record_retry_decision("resource_ceiling")
+                raise
             if response.parsed is not None:
                 return response.parsed
             if response.failure is None:
                 msg = "model response contract lost both result and failure"
                 raise RuntimeError(msg)
             if not response.failure.retryable or self.infrastructure_retries >= _TOTAL_INFRASTRUCTURE_RETRY_LIMIT:
+                if response.failure.retryable:
+                    self._record_retry_decision("retry_limit_reached")
                 self.failures.append(response.failure)
                 raise WorkflowExecutionError(response.failure)
+            self._record_retry_decision("retry_scheduled")
             self.infrastructure_retries += 1
             attempt += 1
 
@@ -254,8 +262,10 @@ class _CallTracker:
                 model_identifier=model_config.model_identifier,
                 reasoning=model_config.reasoning,
                 model_config_digest=canonical_digest(model_config),
+                provider_internal_retries=model_config.provider_internal_retries,
                 attempt_number=response.attempt_number,
                 infrastructure_retry=response.attempt_number > 1,
+                infrastructure_retry_eligible=bool(response.failure and response.failure.retryable),
                 started_at=started,
                 ended_at=ended,
                 latency_ms=response.latency_ms,
@@ -263,6 +273,12 @@ class _CallTracker:
                 failure=response.failure,
             )
         )
+
+    def _record_retry_decision(
+        self,
+        decision: Literal["retry_scheduled", "retry_limit_reached", "resource_ceiling"],
+    ) -> None:
+        self.calls[-1] = self.calls[-1].model_copy(update={"retry_decision": decision})
 
     def _enforce_resource_limits(self) -> None:
         if any(call.usage.currency is not None and call.usage.currency != self.limits.currency for call in self.calls):
@@ -724,6 +740,7 @@ def run_comparable_bc(
     condition_b: ConditionBWorkflow,
     condition_c: ConditionCWorkflow,
     committed_brief_digest: str | None = None,
+    boundary_callback: Callable[[str], None] | None = None,
 ) -> tuple[ConditionSubmission, ConditionSubmission]:
     """Prove canonical B/C byte identity before either workflow executes."""
     digest = assert_byte_identical_case_briefs(brief_for_b, brief_for_c, committed_brief_digest)
@@ -739,10 +756,16 @@ def run_comparable_bc(
     ):
         msg = "B and C paired execution requires the protocol ceiling of two revisions"
         raise ValueError(msg)
-    return (
-        condition_b.run(brief=brief_for_b, committed_brief_digest=digest),
-        condition_c.run(brief=brief_for_c, committed_brief_digest=digest),
-    )
+    if boundary_callback is not None:
+        boundary_callback("condition_b_started")
+    submission_b = condition_b.run(brief=brief_for_b, committed_brief_digest=digest)
+    if boundary_callback is not None:
+        boundary_callback("condition_b_finished")
+        boundary_callback("condition_c_started")
+    submission_c = condition_c.run(brief=brief_for_c, committed_brief_digest=digest)
+    if boundary_callback is not None:
+        boundary_callback("condition_c_finished")
+    return submission_b, submission_c
 
 
 def new_run_id() -> str:

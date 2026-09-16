@@ -18,6 +18,8 @@ from .security import assert_credential_free
 from .workflows import ConditionAWorkflow, ConditionBWorkflow, ConditionCWorkflow, run_comparable_bc
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .storage import PrivateExperimentStorage
 
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "development_cases.json"
@@ -69,20 +71,27 @@ def derive_ecological_input(brief: CaseBrief) -> str:
 def run_development_case(
     brief: CaseBrief,
     workflows: DevelopmentWorkflows,
+    *,
+    boundary_callback: Callable[[str], None] | None = None,
 ) -> tuple[ConditionSubmission, ConditionSubmission, ConditionSubmission]:
     """Execute one complete A/B/C rehearsal with no provider-specific behavior."""
     if brief.dataset_class is not DatasetClass.DEVELOPMENT:
         msg = "only development cases may use the rehearsal runner"
         raise ValueError(msg)
+    if boundary_callback is not None:
+        boundary_callback("condition_a_started")
     submission_a = workflows.condition_a.run(
         case_id=brief.case_id,
         ecological_input=derive_ecological_input(brief),
     )
+    if boundary_callback is not None:
+        boundary_callback("condition_a_finished")
     submission_b, submission_c = run_comparable_bc(
         brief_for_b=brief,
         brief_for_c=brief,
         condition_b=workflows.condition_b,
         condition_c=workflows.condition_c,
+        boundary_callback=boundary_callback,
     )
     return submission_a, submission_b, submission_c
 
@@ -189,9 +198,13 @@ def run_development_case_with_persistence(
     storage: PrivateExperimentStorage,
     *,
     review_mode: str = "development",
+    boundary_callback: Callable[[str], None] | None = None,
 ) -> tuple[ConditionSubmission, ConditionSubmission, ConditionSubmission]:
     """Execute A/B/C, then persist evidence before any bundle/presentation work."""
-    submissions = run_development_case(brief, workflows)
+    if boundary_callback is None:
+        submissions = run_development_case(brief, workflows)
+    else:
+        submissions = run_development_case(brief, workflows, boundary_callback=boundary_callback)
     effective_mode = review_mode
     if review_mode == "development" and len({submission.case_id for submission in submissions}) == 1:
         effective_mode = "single_case_development"

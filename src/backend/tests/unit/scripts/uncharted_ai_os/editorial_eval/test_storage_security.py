@@ -10,7 +10,11 @@ from scripts.uncharted_ai_os.editorial_eval.security import (
     ExternalTracingEnabledError,
     assert_external_tracing_disabled,
 )
-from scripts.uncharted_ai_os.editorial_eval.storage import PrivateExperimentStorage, StorageSafetyError
+from scripts.uncharted_ai_os.editorial_eval.storage import (
+    PrivateExperimentStorage,
+    StorageRecordExistsError,
+    StorageSafetyError,
+)
 
 
 def initialize_repo(path: Path, ignore_rule: str) -> None:
@@ -42,6 +46,15 @@ def test_storage_writes_atomically_with_restrictive_permissions(tmp_path: Path) 
     if os.name == "posix":
         assert destination.stat().st_mode & 0o777 == 0o600
         assert destination.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_storage_write_once_preserves_immutable_historical_record(tmp_path: Path) -> None:
+    initialize_repo(tmp_path, "var/\n")
+    storage = PrivateExperimentStorage(tmp_path)
+    storage.write_json_once("deviations/correction.json", {"version": 1})
+    with pytest.raises(StorageRecordExistsError, match="already exists"):
+        storage.write_json_once("deviations/correction.json", {"version": 2})
+    assert storage.read_json("deviations/correction.json") == {"version": 1}
 
 
 def test_storage_rejects_symlink_escape(tmp_path: Path) -> None:

@@ -135,6 +135,7 @@ def test_condition_b_is_strong_single_agent_with_self_review_and_revision(case_b
         "b_generator",
         "b_self_review",
     ]
+    assert all(record.model_config.provider_internal_retries == 0 for record in invoker.records)
     assert len(submission.trace.structural_validations) == 2
 
 
@@ -263,6 +264,7 @@ def test_condition_c_creator_evaluator_revision_and_fresh_evaluation(case_brief,
     assert submission.trace.substantive_revisions == 1
     evaluator_records = [record for record in invoker.records if record.output_type.__name__ == "EvaluationResult"]
     assert len(evaluator_records) == 2
+    assert all(record.model_config.provider_internal_retries == 0 for record in invoker.records)
     assert "FIRST_EVALUATION_SECRET_MARKER" not in evaluator_records[1].messages[1].content
     assert "A outputs" not in evaluator_records[1].messages[1].content
     assert "reveal_mapping" not in evaluator_records[1].messages[1].content
@@ -699,7 +701,11 @@ def test_one_identical_infrastructure_retry_is_traced(model_config) -> None:
     )
     submission = workflow.run(case_id="case_retry", ecological_input="Input")
     assert [call.attempt_number for call in submission.trace.calls] == [1, 2]
+    assert submission.trace.calls[0].infrastructure_retry_eligible is True
+    assert submission.trace.calls[0].retry_decision == "retry_scheduled"
     assert submission.trace.calls[1].infrastructure_retry is True
+    assert submission.trace.calls[1].retry_decision == "not_applicable"
+    assert all(call.provider_internal_retries == 0 for call in submission.trace.calls)
     assert invoker.records[0].messages == invoker.records[1].messages
     assert submission.normalized.decision is NormalizedDecision.PROCEED_CANDIDATE
 
@@ -730,7 +736,39 @@ def test_second_infrastructure_failure_stops_and_is_retained(model_config) -> No
     ).run(case_id="case_retry_failure", ecological_input="Input")
     assert submission.normalized.decision is NormalizedDecision.HUMAN_JUDGMENT_REQUIRED
     assert len(submission.trace.calls) == 2
+    assert submission.trace.calls[0].retry_decision == "retry_scheduled"
+    assert submission.trace.calls[1].retry_decision == "retry_limit_reached"
     assert submission.trace.failures == (failure,)
+
+
+def test_resource_ceiling_suppresses_retry_and_records_decision(model_config) -> None:
+    failure = FailureInfo(
+        failure_type="infrastructure_timeout",
+        safe_message="Transient timeout.",
+        retryable=True,
+    )
+    invoker = ScriptedModelInvoker([ScriptedStep(failure=failure, latency_ms=31_000)])
+    runtime_config = make_runtime_configuration(
+        model_config,
+        a_limits=ExecutionLimits(
+            max_model_calls=2,
+            max_substantive_revisions=0,
+            max_total_tokens=1_000,
+            max_total_latency_ms=30_000,
+            max_cost=Decimal(1),
+            currency="USD",
+        ),
+    )
+    submission = ConditionAWorkflow(
+        invoker=invoker,
+        runtime_config=runtime_config,
+        clock=fixed_clock,
+        run_id_factory=run_ids("retry_suppressed"),
+    ).run(case_id="case_retry_suppressed", ecological_input="Input")
+    assert len(invoker.records) == 1
+    assert submission.trace.calls[0].infrastructure_retry_eligible is True
+    assert submission.trace.calls[0].retry_decision == "resource_ceiling"
+    assert submission.trace.failures[0].failure_type == "latency_budget_exceeded"
 
 
 def test_condition_c_uses_separately_traced_evaluator_configuration(case_brief, model_config, bc_limits) -> None:
@@ -898,6 +936,7 @@ def test_langchain_adapter_invokes_mocked_structured_output_and_extracts_usage(m
     assert response.usage.accounted_total_tokens == 165
     assert response.raw_provider_metadata == {"model_name": "mocked-model", "finish_reason": "stop"}
     assert captured["config"] == {"callbacks": []}
+    assert captured["parameters"]["max_retries"] == 0
     assert "prompt_version:" not in captured["messages"][0][1]
 
 
@@ -932,9 +971,11 @@ def test_langchain_adapter_retains_safe_provider_failure_diagnostics(monkeypatch
 
 def test_langchain_model_config_preflight_uses_adapter_normalization(monkeypatch, model_config) -> None:
     class FakeModel:
+        max_retries = 0
+        request_timeout = 30
+        temperature = None
         _default_params = {
             "model": "gpt-5.6-sol",
-            "temperature": None,
             "max_completion_tokens": 2000,
             "seed": 7,
             "reasoning_effort": "medium",
@@ -948,11 +989,18 @@ def test_langchain_model_config_preflight_uses_adapter_normalization(monkeypatch
 
     monkeypatch.setattr("langchain.chat_models.init_chat_model", fake_init_chat_model)
     normalized = preflight_langchain_model_config(model_config)
-    assert normalized["max_completion_tokens"] == 2000
-    assert normalized["reasoning_effort"] == "medium"
-    assert normalized["temperature"] is None
+    assert normalized == {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "temperature": None,
+        "seed": 7,
+        "max_completion_tokens": 2000,
+        "timeout": 30,
+        "max_retries": 0,
+    }
     assert captured["max_tokens"] == 2000
     assert captured["timeout"] == 30
+    assert captured["max_retries"] == 0
 
 
 def test_presentation_failure_diagnostics_retain_only_safe_location() -> None:

@@ -1,4 +1,4 @@
-"""Minimal inspection CLI for local Phase 1F-A artifacts."""
+"""Constrained local CLI for Phase 1F-A inspection and development rehearsal."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ from pydantic import BaseModel
 
 from .canonical import canonical_digest, canonical_json_bytes
 from .contracts import BlindReviewBundle, CaseBrief
+from .development_runner import (
+    APPROVED_DEVELOPMENT_PROFILE,
+    DevelopmentRunError,
+    execute_approved_development_run,
+)
 from .manifest import FreezeManifest, create_freeze_receipt
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -28,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         subparser = subparsers.add_parser(command, help=help_text)
         subparser.add_argument("path", type=Path)
+    run_development = subparsers.add_parser(
+        "run-development",
+        help="Run one approved contaminated development fixture with durable private evidence.",
+    )
+    run_development.add_argument("--profile", required=True, choices=(APPROVED_DEVELOPMENT_PROFILE,))
+    run_development.add_argument("--case", required=True)
     return parser
 
 
@@ -46,12 +57,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "emit-freeze-receipt":
             manifest = _read_model(args.path, FreezeManifest)
             print(canonical_json_bytes(create_freeze_receipt(manifest)).decode())
+        elif args.command == "run-development":
+            result = execute_approved_development_run(
+                Path.cwd(),
+                profile=args.profile,
+                case_id=args.case,
+            )
+            candidate = result.candidate
+            print(f"operator_run_id: {result.operator_run_id}")
+            print(f"candidate_id: {candidate.blind_candidate_id}")
+            print(f"decision: {candidate.submission.decision.value}")
+            if candidate.submission.spoken_script is not None:
+                print(f"spoken_script: {candidate.submission.spoken_script}")
+            if candidate.submission.explanation is not None:
+                print(f"explanation: {candidate.submission.explanation}")
+            if candidate.submission.next_action is not None:
+                print(f"next_action: {candidate.submission.next_action}")
         else:  # pragma: no cover - argparse enforces the choices.
             return 2
+    except DevelopmentRunError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     except (OSError, ValueError):
         # Validation errors may echo sensitive input values, so the CLI reports
         # only the path and contract type. Detailed debugging stays local.
-        print(f"Validation failed for {args.path}.", file=sys.stderr)
+        if args.command == "run-development":
+            print("Development rehearsal validation failed.", file=sys.stderr)
+        else:
+            print(f"Validation failed for {args.path}.", file=sys.stderr)
         return 2
     return 0
 

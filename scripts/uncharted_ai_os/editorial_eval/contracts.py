@@ -453,8 +453,16 @@ class ModelCallTrace(StrictModel):
     model_identifier: ShortText
     reasoning: ShortText
     model_config_digest: Sha256Digest
+    provider_internal_retries: Literal[0] = 0
     attempt_number: int = Field(ge=1, le=2)
     infrastructure_retry: bool
+    infrastructure_retry_eligible: bool = False
+    retry_decision: Literal[
+        "not_applicable",
+        "retry_scheduled",
+        "retry_limit_reached",
+        "resource_ceiling",
+    ] = "not_applicable"
     started_at: datetime
     ended_at: datetime
     latency_ms: int = Field(ge=0)
@@ -471,6 +479,9 @@ class ModelCallTrace(StrictModel):
             raise ValueError(msg)
         if self.infrastructure_retry != (self.attempt_number > 1):
             msg = "retry marker must agree with attempt number"
+            raise ValueError(msg)
+        if self.retry_decision != "not_applicable" and not self.infrastructure_retry_eligible:
+            msg = "retry decisions require a retry-eligible infrastructure failure"
             raise ValueError(msg)
         return self
 
