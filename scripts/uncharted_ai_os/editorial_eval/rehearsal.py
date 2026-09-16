@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from .blinding import RevealCustodian, balanced_position_assignments, build_blind_bundle
-from .contracts import BlindReviewBundle, CaseBrief, ConditionSubmission, DatasetClass
+from .blinding import RevealCustodian, balanced_position_assignments, build_blind_bundle, condition_execution_order
+from .canonical import canonical_digest
+from .contracts import BlindReviewBundle, CaseBrief, Condition, ConditionSubmission, DatasetClass
+from .security import assert_credential_free
 from .workflows import ConditionAWorkflow, ConditionBWorkflow, ConditionCWorkflow, run_comparable_bc
 
+if TYPE_CHECKING:
+    from .storage import PrivateExperimentStorage
+
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "development_cases.json"
+_DEVELOPMENT_SUBMISSION_COUNT = 3
 
 
 @dataclass(frozen=True)
@@ -82,10 +89,27 @@ def build_development_blind_bundle(
     *,
     secret_seed: bytes,
     reveal_custodian: RevealCustodian,
+    case: CaseBrief | None = None,
     bundle_label: str = "contaminated_development_rehearsal",
 ) -> BlindReviewBundle:
     """Return only the blind view; the custodian separately seals the reveal map."""
     case_ids = sorted({submission.case_id for submission in submissions})
+    if len(case_ids) == 1:
+        if case is None:
+            msg = "single-case development blinding requires the explicit CaseBrief"
+            raise ValueError(msg)
+        single_case_label = (
+            "single_case_contaminated_development_rehearsal"
+            if bundle_label == "contaminated_development_rehearsal"
+            else bundle_label
+        )
+        return build_single_case_development_blind_bundle(
+            case,
+            submissions,
+            secret_seed=secret_seed,
+            reveal_custodian=reveal_custodian,
+            bundle_label=single_case_label,
+        )
     positions = balanced_position_assignments(case_ids, secret_seed)
     return build_blind_bundle(
         submissions,
@@ -93,4 +117,127 @@ def build_development_blind_bundle(
         position_orders=positions,
         bundle_label=bundle_label,
         reveal_custodian=reveal_custodian,
+    )
+
+
+def build_single_case_development_blind_bundle(
+    case: CaseBrief,
+    submissions: tuple[ConditionSubmission, ...],
+    *,
+    secret_seed: bytes,
+    reveal_custodian: RevealCustodian,
+    bundle_label: str = "single_case_contaminated_development_rehearsal",
+) -> BlindReviewBundle:
+    """Build one-case development blinding without weakening holdout balancing."""
+    if case.dataset_class is not DatasetClass.DEVELOPMENT:
+        msg = "single-case blinding is DEVELOPMENT ONLY and rejects holdout cases"
+        raise ValueError(msg)
+    if (
+        len(submissions) != _DEVELOPMENT_SUBMISSION_COUNT
+        or {submission.case_id for submission in submissions} != {case.case_id}
+    ):
+        msg = "single-case blinding requires exactly three submissions for the supplied case"
+        raise ValueError(msg)
+    if {submission.condition for submission in submissions} != set(Condition):
+        msg = "single-case blinding requires exactly one A, B, and C submission"
+        raise ValueError(msg)
+    # This is a seeded permutation, not a cross-case balance claim.
+    positions = {case.case_id: condition_execution_order(case.case_id, secret_seed)}
+    return build_blind_bundle(
+        submissions,
+        secret_seed=secret_seed,
+        position_orders=positions,
+        bundle_label=bundle_label,
+        reveal_custodian=reveal_custodian,
+    )
+
+
+def persist_development_execution(
+    storage: PrivateExperimentStorage,
+    case: CaseBrief,
+    submissions: tuple[ConditionSubmission, ...],
+    *,
+    review_mode: str = "development",
+) -> Path:
+    """Persist bounded execution evidence before any presentation work."""
+    if case.dataset_class is not DatasetClass.DEVELOPMENT:
+        msg = "development execution evidence cannot persist a holdout case"
+        raise ValueError(msg)
+    if (
+        len(submissions) != _DEVELOPMENT_SUBMISSION_COUNT
+        or {submission.case_id for submission in submissions} != {case.case_id}
+    ):
+        msg = "execution evidence requires exactly A/B/C submissions for the case"
+        raise ValueError(msg)
+    payload = {
+        "case_id": case.case_id,
+        "dataset_class": case.dataset_class.value,
+        "contamination_labels": list(case.contamination_labels),
+        "review_mode": review_mode,
+        "case_brief_digest": canonical_digest(case),
+        "condition_submissions": [submission.model_dump(mode="json") for submission in submissions],
+    }
+    return storage.write_json(f"runs/{case.case_id}.json", payload)
+
+
+def run_development_case_with_persistence(
+    brief: CaseBrief,
+    workflows: DevelopmentWorkflows,
+    storage: PrivateExperimentStorage,
+    *,
+    review_mode: str = "development",
+) -> tuple[ConditionSubmission, ConditionSubmission, ConditionSubmission]:
+    """Execute A/B/C, then persist evidence before any bundle/presentation work."""
+    submissions = run_development_case(brief, workflows)
+    effective_mode = review_mode
+    if review_mode == "development" and len({submission.case_id for submission in submissions}) == 1:
+        effective_mode = "single_case_development"
+    persist_development_execution(storage, brief, submissions, review_mode=effective_mode)
+    return submissions
+
+
+def persist_development_blind_bundle(
+    storage: PrivateExperimentStorage,
+    case: CaseBrief,
+    bundle: BlindReviewBundle,
+    *,
+    review_mode: str = "development",
+) -> Path:
+    """Persist blind material after construction without persisting its reveal mapping."""
+    if case.dataset_class is not DatasetClass.DEVELOPMENT:
+        msg = "development blind material cannot persist a holdout case"
+        raise ValueError(msg)
+    if any(candidate.case_id != case.case_id for candidate in bundle.candidates):
+        msg = "blind bundle contains a case different from the supplied development case"
+        raise ValueError(msg)
+    effective_mode = review_mode
+    if review_mode == "development" and len({candidate.case_id for candidate in bundle.candidates}) == 1:
+        effective_mode = "single_case_development"
+    payload = {
+        "case_id": case.case_id,
+        "dataset_class": case.dataset_class.value,
+        "review_mode": effective_mode,
+        "blind_bundle": bundle.model_dump(mode="json"),
+    }
+    return storage.write_json(f"blind/{case.case_id}.json", payload)
+
+
+def persist_development_failure(
+    storage: PrivateExperimentStorage,
+    case_id: str,
+    *,
+    stage: str,
+    failure_type: str,
+    safe_message: str,
+) -> Path:
+    """Record a safe downstream failure without replacing execution evidence."""
+    assert_credential_free({"failure_type": failure_type, "stage": stage, "safe_message": safe_message})
+    return storage.write_json(
+        f"failures/{case_id}_{stage}.json",
+        {
+            "case_id": case_id,
+            "stage": stage,
+            "failure_type": failure_type,
+            "safe_message": safe_message,
+        },
     )
