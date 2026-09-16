@@ -13,6 +13,7 @@ from scripts.uncharted_ai_os.editorial_eval.contracts import (
     ClaimType,
     CreatorStopDecision,
     CTerminalState,
+    FailureDiagnostics,
     FailureInfo,
     InternalDecision,
     NormalizedDecision,
@@ -26,10 +27,11 @@ from scripts.uncharted_ai_os.editorial_eval.invokers import (
     ModelMessage,
     ScriptedModelInvoker,
     ScriptedStep,
+    preflight_langchain_model_config,
     sanitize_provider_metadata,
 )
 from scripts.uncharted_ai_os.editorial_eval.prompt_assets import PromptName
-from scripts.uncharted_ai_os.editorial_eval.rehearsal import DevelopmentWorkflows
+from scripts.uncharted_ai_os.editorial_eval.rehearsal import DevelopmentWorkflows, presentation_failure_diagnostics
 from scripts.uncharted_ai_os.editorial_eval.security import (
     CredentialConfigurationError,
     ExternalTracingEnabledError,
@@ -897,6 +899,82 @@ def test_langchain_adapter_invokes_mocked_structured_output_and_extracts_usage(m
     assert response.raw_provider_metadata == {"model_name": "mocked-model", "finish_reason": "stop"}
     assert captured["config"] == {"callbacks": []}
     assert "prompt_version:" not in captured["messages"][0][1]
+
+
+def test_langchain_adapter_retains_safe_provider_failure_diagnostics(monkeypatch, model_config) -> None:
+    class FakeProviderError(Exception):
+        status_code = 400
+        code = "invalid_request"
+        type = "invalid_request_error"
+        request_id = "req_opaque_123"
+
+    def fake_init_chat_model(**_kwargs):
+        raise FakeProviderError
+
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", fake_init_chat_model)
+    response = LangChainModelInvoker().invoke(
+        (ModelMessage(role="user", content="private case prompt"),),
+        NormalizedSubmission,
+        model_config,
+    )
+    assert response.failure is not None
+    diagnostics = response.failure.diagnostics
+    assert diagnostics is not None
+    assert diagnostics.stage == "model_initialization"
+    assert diagnostics.http_status_code == 400
+    assert diagnostics.provider_error_code == "invalid_request"
+    assert diagnostics.request_id == "req_opaque_123"
+    assert diagnostics.network_request_attempted is False
+    serialized = response.model_dump_json()
+    assert "secret" not in serialized
+    assert "private case prompt" not in serialized
+
+
+def test_langchain_model_config_preflight_uses_adapter_normalization(monkeypatch, model_config) -> None:
+    class FakeModel:
+        _default_params = {
+            "model": "gpt-5.6-sol",
+            "temperature": None,
+            "max_completion_tokens": 2000,
+            "seed": 7,
+            "reasoning_effort": "medium",
+        }
+
+    captured = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured.update(kwargs)
+        return FakeModel()
+
+    monkeypatch.setattr("langchain.chat_models.init_chat_model", fake_init_chat_model)
+    normalized = preflight_langchain_model_config(model_config)
+    assert normalized["max_completion_tokens"] == 2000
+    assert normalized["reasoning_effort"] == "medium"
+    assert normalized["temperature"] is None
+    assert captured["max_tokens"] == 2000
+    assert captured["timeout"] == 30
+
+
+def test_presentation_failure_diagnostics_retain_only_safe_location() -> None:
+    try:
+        raise AttributeError("candidate mapping=secret").with_traceback(None)
+    except AttributeError as exc:
+        diagnostics = presentation_failure_diagnostics(
+            exc,
+            object_type="BlindCandidate",
+            expected_type="NormalizedSubmission",
+            actual_type="NoneType",
+        )
+    assert isinstance(diagnostics, FailureDiagnostics)
+    assert diagnostics.stage == "presentation"
+    assert diagnostics.exception_class == "AttributeError"
+    assert diagnostics.object_type == "BlindCandidate"
+    assert diagnostics.expected_type == "NormalizedSubmission"
+    assert diagnostics.actual_type == "NoneType"
+    assert diagnostics.module_path is not None
+    assert diagnostics.function_name == "test_presentation_failure_diagnostics_retain_only_safe_location"
+    assert diagnostics.line_number is not None
+    assert "secret" not in diagnostics.diagnostic_message
 
 
 @pytest.mark.parametrize(

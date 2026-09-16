@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from collections.abc import Sequence  # noqa: TC003
@@ -10,7 +11,15 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
 
-from .contracts import FailureInfo, JsonValue, ResourceUsage, ShortText, StrictModel, assert_json_safe
+from .contracts import (
+    FailureDiagnostics,
+    FailureInfo,
+    JsonValue,
+    ResourceUsage,
+    ShortText,
+    StrictModel,
+    assert_json_safe,
+)
 from .security import assert_credential_free, assert_external_tracing_disabled
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -26,6 +35,9 @@ _SAFE_PROVIDER_METADATA_KEYS = {
     "stop_reason",
     "system_fingerprint",
 }
+_MAX_DIAGNOSTIC_MESSAGE_LENGTH = 240
+_MIN_HTTP_STATUS = 100
+_MAX_HTTP_STATUS = 599
 
 
 class ModelMessage(StrictModel):
@@ -167,34 +179,32 @@ class LangChainModelInvoker:
         assert_credential_free(model_config.model_dump(mode="python"))
         assert_external_tracing_disabled()
         started = time.perf_counter()
+        stage = "model_initialization"
         try:
             from langchain.chat_models import init_chat_model
 
-            parameters: dict[str, Any] = {
-                "temperature": model_config.temperature,
-                "max_tokens": model_config.max_output_tokens,
-                "timeout": model_config.timeout_seconds,
-            }
-            if model_config.seed is not None:
-                parameters["seed"] = model_config.seed
-            if model_config.reasoning != "not_exposed":
-                parameters["reasoning_effort"] = model_config.reasoning
+            parameters = build_langchain_parameters(model_config)
             model = init_chat_model(
                 model=model_config.model_identifier,
                 model_provider=model_config.provider,
                 **parameters,
             )
+            stage = "structured_output_binding"
             structured = model.with_structured_output(output_type, include_raw=True)
+            stage = "provider_request"
             provider_result = structured.invoke(
                 [(message.role, message.content) for message in messages],
                 config={"callbacks": []},
             )
+            stage = "provider_response"
             parsed = provider_result.get("parsed")
             parsing_error = provider_result.get("parsing_error")
             raw = provider_result.get("raw")
+            stage = "usage_extraction"
             usage = _extract_usage(raw)
             metadata = sanitize_provider_metadata(getattr(raw, "response_metadata", {}) or {})
             latency_ms = round((time.perf_counter() - started) * 1000)
+            stage = "structured_output_parsing"
             if parsing_error is not None or not isinstance(parsed, output_type):
                 return ModelResponse[OutputT](
                     raw_provider_metadata=metadata,
@@ -205,6 +215,13 @@ class LangChainModelInvoker:
                         failure_type="structured_output_error",
                         safe_message="Model response did not satisfy the requested structured output.",
                         retryable=False,
+                        diagnostics=_exception_diagnostics(
+                            parsing_error or TypeError("parsed result had the wrong type"),
+                            stage=stage,
+                            network_request_attempted=True,
+                            expected_type=output_type.__name__,
+                            actual_type=type(parsed).__name__ if parsed is not None else None,
+                        ),
                     ),
                 )
             return ModelResponse[OutputT](
@@ -225,8 +242,103 @@ class LangChainModelInvoker:
                     failure_type="model_invocation_failure",
                     safe_message="Model invocation failed; provider details were suppressed.",
                     retryable=retryable,
+                    diagnostics=_exception_diagnostics(
+                        exc,
+                        stage=stage,
+                        network_request_attempted=stage
+                        in {"provider_request", "provider_response", "usage_extraction", "structured_output_parsing"},
+                    ),
                 ),
             )
+
+
+def build_langchain_parameters(model_config: InvocationModelConfig) -> dict[str, Any]:
+    """Build the exact non-secret kwargs passed to LangChain."""
+    assert_credential_free(model_config.model_dump(mode="python"))
+    parameters: dict[str, Any] = {
+        "temperature": model_config.temperature,
+        "max_tokens": model_config.max_output_tokens,
+        "timeout": model_config.timeout_seconds,
+    }
+    if model_config.seed is not None:
+        parameters["seed"] = model_config.seed
+    if model_config.reasoning != "not_exposed":
+        parameters["reasoning_effort"] = model_config.reasoning
+    return parameters
+
+
+def preflight_langchain_model_config(model_config: InvocationModelConfig) -> dict[str, JsonValue]:
+    """Normalize configuration through the installed adapter without invoking it."""
+    from langchain.chat_models import init_chat_model
+
+    parameters = build_langchain_parameters(model_config)
+    model = init_chat_model(model=model_config.model_identifier, model_provider=model_config.provider, **parameters)
+    defaults = getattr(model, "_default_params", {})
+    normalized = {
+        key: value
+        for key, value in defaults.items()
+        if key in {"model", "temperature", "max_tokens", "max_completion_tokens", "timeout", "seed", "reasoning_effort"}
+    }
+    return assert_json_safe(normalized)  # type: ignore[return-value]
+
+
+def _exception_diagnostics(
+    exc: BaseException,
+    *,
+    stage: str,
+    network_request_attempted: bool,
+    expected_type: str | None = None,
+    actual_type: str | None = None,
+) -> FailureDiagnostics:
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if not isinstance(status, int) or not _MIN_HTTP_STATUS <= status <= _MAX_HTTP_STATUS:
+        status = None
+    request_id = _safe_identifier(getattr(exc, "request_id", None))
+    if request_id is None:
+        response = getattr(exc, "response", None)
+        request_id = _safe_identifier(getattr(response, "request_id", None))
+        if request_id is None:
+            headers = getattr(response, "headers", None)
+            request_id = _safe_identifier(headers.get("x-request-id") if isinstance(headers, dict) else None)
+    provider_code = _safe_identifier(getattr(exc, "code", None))
+    provider_type = _safe_identifier(getattr(exc, "type", None))
+    return FailureDiagnostics(
+        exception_class=type(exc).__name__,
+        exception_module=type(exc).__module__,
+        stage=stage,  # type: ignore[arg-type]
+        http_status_code=status,
+        provider_error_code=provider_code,
+        provider_error_type=provider_type,
+        request_id=request_id,
+        network_request_attempted=network_request_attempted,
+        diagnostic_message=_safe_exception_message(exc, stage),
+        expected_type=expected_type,
+        actual_type=actual_type,
+    )
+
+
+def _safe_identifier(value: Any) -> str | None:
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{3,128}", value):
+        return None
+    return value
+
+
+def _safe_exception_message(exc: BaseException, stage: str) -> str:
+    message = str(exc).replace("\n", " ").strip()
+    message = re.sub(r"https?://\S+", "<url>", message, flags=re.IGNORECASE)
+    message = re.sub(r"(?:sk|rk)-[A-Za-z0-9_-]{8,}", "<redacted>", message, flags=re.IGNORECASE)
+    message = re.sub(
+        r"(?:api[_-]?key|authorization|bearer|token|secret|password|mapping|candidate)\s*[=:]\s*\S+",
+        "<redacted>",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if not message or len(message) > _MAX_DIAGNOSTIC_MESSAGE_LENGTH:
+        return f"{stage} failed with {type(exc).__name__}."
+    return message
 
 
 def sanitize_provider_metadata(value: Any) -> dict[str, JsonValue]:

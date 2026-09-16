@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,7 +13,7 @@ from pydantic import TypeAdapter
 
 from .blinding import RevealCustodian, balanced_position_assignments, build_blind_bundle, condition_execution_order
 from .canonical import canonical_digest
-from .contracts import BlindReviewBundle, CaseBrief, Condition, ConditionSubmission, DatasetClass
+from .contracts import BlindReviewBundle, CaseBrief, Condition, ConditionSubmission, DatasetClass, FailureDiagnostics
 from .security import assert_credential_free
 from .workflows import ConditionAWorkflow, ConditionBWorkflow, ConditionCWorkflow, run_comparable_bc
 
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
 
 _FIXTURE_PATH = Path(__file__).with_name("fixtures") / "development_cases.json"
 _DEVELOPMENT_SUBMISSION_COUNT = 3
+_MAX_DIAGNOSTIC_MESSAGE_LENGTH = 240
 
 
 @dataclass(frozen=True)
@@ -229,6 +232,7 @@ def persist_development_failure(
     stage: str,
     failure_type: str,
     safe_message: str,
+    diagnostics: FailureDiagnostics | None = None,
 ) -> Path:
     """Record a safe downstream failure without replacing execution evidence."""
     assert_credential_free({"failure_type": failure_type, "stage": stage, "safe_message": safe_message})
@@ -239,5 +243,47 @@ def persist_development_failure(
             "stage": stage,
             "failure_type": failure_type,
             "safe_message": safe_message,
+            "diagnostics": diagnostics.model_dump(mode="json") if diagnostics is not None else None,
         },
+    )
+
+
+def presentation_failure_diagnostics(
+    exc: BaseException,
+    *,
+    stage: str = "presentation",
+    object_type: str | None = None,
+    expected_type: str | None = None,
+    actual_type: str | None = None,
+) -> FailureDiagnostics:
+    """Extract a safe local traceback location without retaining locals/content."""
+    frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ is not None else None
+    module_path = None
+    if frame is not None:
+        path = Path(frame.filename)
+        try:
+            module_path = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
+        except ValueError:
+            module_path = path.name
+    message = str(exc).replace("\n", " ").strip()
+    message = re.sub(r"https?://\S+", "<url>", message, flags=re.IGNORECASE)
+    message = re.sub(
+        r"(?:api[_-]?key|authorization|bearer|token|secret|password|mapping|candidate)\s*[=:]\s*\S+",
+        "<redacted>",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if not message or len(message) > _MAX_DIAGNOSTIC_MESSAGE_LENGTH:
+        message = f"{type(exc).__name__} during {stage}."
+    return FailureDiagnostics(
+        exception_class=type(exc).__name__,
+        exception_module=type(exc).__module__,
+        stage=stage,  # type: ignore[arg-type]
+        diagnostic_message=message,
+        module_path=module_path,
+        function_name=frame.name if frame is not None else None,
+        line_number=frame.lineno if frame is not None else None,
+        object_type=object_type,
+        expected_type=expected_type,
+        actual_type=actual_type,
     )

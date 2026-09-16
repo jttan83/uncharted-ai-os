@@ -409,6 +409,37 @@ class FailureInfo(StrictModel):
     failure_type: Identifier
     safe_message: ShortText
     retryable: bool
+    diagnostics: "FailureDiagnostics | None" = None
+
+
+class FailureDiagnostics(StrictModel):
+    """Allowlisted, non-content diagnostics for private failure traces."""
+
+    exception_class: ShortText
+    exception_module: ShortText
+    stage: Literal[
+        "model_initialization",
+        "structured_output_binding",
+        "request_construction",
+        "provider_request",
+        "provider_response",
+        "structured_output_parsing",
+        "usage_extraction",
+        "contract_validation",
+        "presentation",
+    ]
+    http_status_code: int | None = Field(default=None, ge=100, le=599)
+    provider_error_code: ShortText | None = None
+    provider_error_type: ShortText | None = None
+    request_id: ShortText | None = None
+    network_request_attempted: bool = False
+    diagnostic_message: ShortText
+    module_path: ShortText | None = None
+    function_name: ShortText | None = None
+    line_number: int | None = Field(default=None, ge=1)
+    object_type: ShortText | None = None
+    expected_type: ShortText | None = None
+    actual_type: ShortText | None = None
 
 
 class ModelCallTrace(StrictModel):
