@@ -37,27 +37,52 @@ from .workflows import ConditionAWorkflow, ConditionBWorkflow, ConditionCWorkflo
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-APPROVED_DEVELOPMENT_PROFILE = "phase1f-a-dev-v1"
+APPROVED_DEVELOPMENT_PROFILE_V1 = "phase1f-a-dev-v1"
+APPROVED_DEVELOPMENT_PROFILE_V2 = "phase1f-a-dev-v2"
+# Backward-compatible name for the historical pre-calibration profile.
+APPROVED_DEVELOPMENT_PROFILE = APPROVED_DEVELOPMENT_PROFILE_V1
+APPROVED_DEVELOPMENT_PROFILES = (APPROVED_DEVELOPMENT_PROFILE_V1, APPROVED_DEVELOPMENT_PROFILE_V2)
 _EXPECTED_BRANCH = "uncharted-v0.1"
 _REQUIRED_LABELS = frozenset({"DEVELOPMENT ONLY", "CONTAMINATED", "NOT HOLDOUT"})
 _EXPECTED_LANGCHAIN_PARAMETERS = {
-    "temperature": 0.2,
-    "max_tokens": 2_000,
-    "timeout": 30,
-    "max_retries": 0,
-    "seed": 7,
-    "reasoning_effort": "medium",
+    APPROVED_DEVELOPMENT_PROFILE_V1: {
+        "temperature": 0.2,
+        "max_tokens": 2_000,
+        "timeout": 30,
+        "max_retries": 0,
+        "seed": 7,
+        "reasoning_effort": "medium",
+    },
+    APPROVED_DEVELOPMENT_PROFILE_V2: {
+        "temperature": 0.2,
+        "max_tokens": 8_000,
+        "timeout": 120,
+        "max_retries": 0,
+        "seed": 7,
+        "reasoning_effort": "medium",
+    },
 }
 # The installed reasoning-model adapter intentionally removes the requested
 # non-default temperature. Treat any future normalization change as treatment drift.
 _EXPECTED_EFFECTIVE_ADAPTER_CONFIGURATION = {
-    "model": "gpt-5.6-sol",
-    "reasoning_effort": "medium",
-    "temperature": None,
-    "seed": 7,
-    "max_completion_tokens": 2_000,
-    "timeout": 30,
-    "max_retries": 0,
+    APPROVED_DEVELOPMENT_PROFILE_V1: {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "temperature": None,
+        "seed": 7,
+        "max_completion_tokens": 2_000,
+        "timeout": 30,
+        "max_retries": 0,
+    },
+    APPROVED_DEVELOPMENT_PROFILE_V2: {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "temperature": None,
+        "seed": 7,
+        "max_completion_tokens": 8_000,
+        "timeout": 120,
+        "max_retries": 0,
+    },
 }
 _LIFECYCLE_STATES = (
     "started",
@@ -102,7 +127,7 @@ class OperatorLifecycleEvent(StrictModel):
 class OperatorLifecycleRecord(StrictModel):
     schema_version: Literal["phase-1f-a-operator-lifecycle-v1"] = "phase-1f-a-operator-lifecycle-v1"
     operator_run_id: str = Field(pattern=r"^operator_[0-9a-f]{32}$")
-    profile: Literal["phase1f-a-dev-v1"]
+    profile: Literal["phase1f-a-dev-v1", "phase1f-a-dev-v2"]
     case_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,127}$")
     events: tuple[OperatorLifecycleEvent, ...]
     exit_status: int | None = None
@@ -136,7 +161,7 @@ class OperatorLifecycleRecorder:
         clock: Callable[[], datetime] | None = None,
         operator_run_id: str | None = None,
     ) -> None:
-        if profile != APPROVED_DEVELOPMENT_PROFILE:
+        if profile not in APPROVED_DEVELOPMENT_PROFILES:
             msg = "unsupported development profile"
             raise ValueError(msg)
         self.storage = storage
@@ -182,7 +207,18 @@ class DevelopmentRunError(RuntimeError):
 
 
 def approved_development_model_config(profile: str) -> InvocationModelConfig:
-    if profile != APPROVED_DEVELOPMENT_PROFILE:
+    """Resolve a versioned profile without changing historical V1 semantics.
+
+    V1 is the pre-calibration profile. V2 is capacity-calibrated from
+    contaminated development diagnostics that are not experimental evidence.
+    """
+    if profile == APPROVED_DEVELOPMENT_PROFILE_V1:
+        max_output_tokens = 2_000
+        timeout_seconds = 30
+    elif profile == APPROVED_DEVELOPMENT_PROFILE_V2:
+        max_output_tokens = 8_000
+        timeout_seconds = 120
+    else:
         msg = "unsupported development profile"
         raise ValueError(msg)
     return InvocationModelConfig(
@@ -191,33 +227,52 @@ def approved_development_model_config(profile: str) -> InvocationModelConfig:
         reasoning="medium",
         temperature=0.2,
         seed=7,
-        max_output_tokens=2_000,
-        timeout_seconds=30,
+        max_output_tokens=max_output_tokens,
+        timeout_seconds=timeout_seconds,
         provider_internal_retries=0,
     )
 
 
 def approved_development_runtime(profile: str) -> RuntimeConfiguration:
     model_config = approved_development_model_config(profile)
-    bc_limits = ExecutionLimits(
-        max_model_calls=7,
-        max_substantive_revisions=2,
-        max_total_tokens=20_000,
-        max_total_latency_ms=60_000,
-        max_cost=Decimal(5),
-        currency="USD",
-    )
-    return RuntimeConfiguration(
-        primary_generator=model_config,
-        evaluator=model_config,
-        condition_a=ExecutionLimits(
+    if profile == APPROVED_DEVELOPMENT_PROFILE_V1:
+        bc_limits = ExecutionLimits(
+            max_model_calls=7,
+            max_substantive_revisions=2,
+            max_total_tokens=20_000,
+            max_total_latency_ms=60_000,
+            max_cost=Decimal(5),
+            currency="USD",
+        )
+        a_limits = ExecutionLimits(
             max_model_calls=2,
             max_substantive_revisions=0,
             max_total_tokens=20_000,
             max_total_latency_ms=60_000,
             max_cost=Decimal(5),
             currency="USD",
-        ),
+        )
+    else:
+        bc_limits = ExecutionLimits(
+            max_model_calls=7,
+            max_substantive_revisions=2,
+            max_total_tokens=80_000,
+            max_total_latency_ms=600_000,
+            max_cost=Decimal(5),
+            currency="USD",
+        )
+        a_limits = ExecutionLimits(
+            max_model_calls=2,
+            max_substantive_revisions=0,
+            max_total_tokens=20_000,
+            max_total_latency_ms=300_000,
+            max_cost=Decimal(5),
+            currency="USD",
+        )
+    return RuntimeConfiguration(
+        primary_generator=model_config,
+        evaluator=model_config,
+        condition_a=a_limits,
         condition_b=bc_limits,
         condition_c=bc_limits,
     )
@@ -236,7 +291,13 @@ def select_development_case(case_id: str, cases: tuple[CaseBrief, ...] | None = 
     return case
 
 
-def preflight_development_run(repo_root: Path, runtime: RuntimeConfiguration, case: CaseBrief) -> None:
+def preflight_development_run(
+    repo_root: Path,
+    runtime: RuntimeConfiguration,
+    case: CaseBrief,
+    *,
+    profile: str = APPROVED_DEVELOPMENT_PROFILE,
+) -> None:
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         msg = "OPENAI_API_KEY is not present or is empty"
         raise DevelopmentRunError(msg)
@@ -265,16 +326,16 @@ def preflight_development_run(repo_root: Path, runtime: RuntimeConfiguration, ca
     if runtime.primary_generator != runtime.evaluator:
         msg = "primary and evaluator model configurations differ"
         raise DevelopmentRunError(msg)
-    expected = approved_development_model_config(APPROVED_DEVELOPMENT_PROFILE)
-    if runtime.primary_generator != expected:
+    expected = approved_development_model_config(profile)
+    if runtime != approved_development_runtime(profile):
         msg = "runtime does not match the approved development profile"
         raise DevelopmentRunError(msg)
     parameters = build_langchain_parameters(expected)
-    if parameters != _EXPECTED_LANGCHAIN_PARAMETERS:
+    if parameters != _EXPECTED_LANGCHAIN_PARAMETERS[profile]:
         msg = "requested LangChain parameters do not match the approved development profile"
         raise DevelopmentRunError(msg)
     normalized = preflight_langchain_model_config(expected)
-    if normalized != _EXPECTED_EFFECTIVE_ADAPTER_CONFIGURATION:
+    if normalized != _EXPECTED_EFFECTIVE_ADAPTER_CONFIGURATION[profile]:
         msg = "effective adapter configuration does not match the approved normalized behavior"
         raise DevelopmentRunError(msg)
 
@@ -291,7 +352,7 @@ def execute_approved_development_run(
     try:
         case = select_development_case(case_id)
         runtime = approved_development_runtime(profile)
-        preflight_development_run(repo_root, runtime, case)
+        preflight_development_run(repo_root, runtime, case, profile=profile)
         lifecycle.transition("preflight_passed")
         invoker = LangChainModelInvoker()
         workflows = DevelopmentWorkflows(

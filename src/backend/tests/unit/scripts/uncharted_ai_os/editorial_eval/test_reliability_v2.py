@@ -11,9 +11,16 @@ import pytest
 from openai import APIConnectionError, APITimeoutError
 
 from scripts.uncharted_ai_os.editorial_eval.cli import build_parser
-from scripts.uncharted_ai_os.editorial_eval.contracts import DatasetClass, NormalizedSubmission
+from scripts.uncharted_ai_os.editorial_eval.contracts import (
+    CreatorStopDecision,
+    DatasetClass,
+    NormalizedSubmission,
+    ResourceUsage,
+)
 from scripts.uncharted_ai_os.editorial_eval.development_runner import (
     APPROVED_DEVELOPMENT_PROFILE,
+    APPROVED_DEVELOPMENT_PROFILE_V2,
+    APPROVED_DEVELOPMENT_PROFILES,
     DevelopmentRunError,
     OperatorLifecycleRecorder,
     approved_development_model_config,
@@ -25,22 +32,34 @@ from scripts.uncharted_ai_os.editorial_eval.development_runner import (
 from scripts.uncharted_ai_os.editorial_eval.invokers import (
     LangChainModelInvoker,
     ModelMessage,
+    ScriptedModelInvoker,
+    ScriptedStep,
     build_langchain_parameters,
 )
 from scripts.uncharted_ai_os.editorial_eval.storage import PrivateExperimentStorage
+from scripts.uncharted_ai_os.editorial_eval.workflows import ConditionBWorkflow, CreatorResult
 
 from .conftest import FIXED_TIME
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_EXPECTED_EFFECTIVE_CONFIGURATION = {
+_EXPECTED_EFFECTIVE_CONFIGURATION_V1 = {
     "model": "gpt-5.6-sol",
     "reasoning_effort": "medium",
     "temperature": None,
     "seed": 7,
     "max_completion_tokens": 2_000,
     "timeout": 30,
+    "max_retries": 0,
+}
+_EXPECTED_EFFECTIVE_CONFIGURATION_V2 = {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "medium",
+    "temperature": None,
+    "seed": 7,
+    "max_completion_tokens": 8_000,
+    "timeout": 120,
     "max_retries": 0,
 }
 
@@ -83,14 +102,14 @@ def _configure_safe_preflight(monkeypatch, normalized=None) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "offline-test-value")
     for name in ("LANGCHAIN_TRACING", "LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING", "LANGSMITH_TRACING_V2"):
         monkeypatch.delenv(name, raising=False)
-    effective = _EXPECTED_EFFECTIVE_CONFIGURATION if normalized is None else normalized
+    effective = _EXPECTED_EFFECTIVE_CONFIGURATION_V1 if normalized is None else normalized
     monkeypatch.setattr(
         "scripts.uncharted_ai_os.editorial_eval.development_runner.preflight_langchain_model_config",
         lambda _config: effective,
     )
 
 
-def test_approved_profile_is_exact_and_disables_internal_retries() -> None:
+def test_precalibration_v1_profile_is_preserved_exactly() -> None:
     config = approved_development_model_config(APPROVED_DEVELOPMENT_PROFILE)
     assert config.model_dump(mode="python") == {
         "provider": "openai",
@@ -116,6 +135,86 @@ def test_approved_profile_is_exact_and_disables_internal_retries() -> None:
         build_langchain_parameters(model_config)["max_retries"] == 0
         for model_config in (runtime.primary_generator, runtime.evaluator)
     )
+
+
+def test_capacity_calibrated_v2_profile_and_guardrails_are_exact() -> None:
+    config = approved_development_model_config(APPROVED_DEVELOPMENT_PROFILE_V2)
+    assert config.model_dump(mode="python") == {
+        "provider": "openai",
+        "model_identifier": "gpt-5.6-sol",
+        "reasoning": "medium",
+        "temperature": 0.2,
+        "seed": 7,
+        "max_output_tokens": 8_000,
+        "timeout_seconds": 120,
+        "provider_internal_retries": 0,
+    }
+    assert build_langchain_parameters(config) == {
+        "temperature": 0.2,
+        "max_tokens": 8_000,
+        "timeout": 120,
+        "max_retries": 0,
+        "seed": 7,
+        "reasoning_effort": "medium",
+    }
+    runtime = approved_development_runtime(APPROVED_DEVELOPMENT_PROFILE_V2)
+    assert runtime.primary_generator == runtime.evaluator == config
+    assert runtime.condition_b == runtime.condition_c
+    assert runtime.condition_b.model_dump(mode="python") == {
+        "max_model_calls": 7,
+        "max_substantive_revisions": 2,
+        "max_total_tokens": 80_000,
+        "max_total_latency_ms": 600_000,
+        "max_cost": 5,
+        "currency": "USD",
+    }
+    assert runtime.condition_a.model_dump(mode="python") == {
+        "max_model_calls": 2,
+        "max_substantive_revisions": 0,
+        "max_total_tokens": 20_000,
+        "max_total_latency_ms": 300_000,
+        "max_cost": 5,
+        "currency": "USD",
+    }
+
+
+def test_v2_guardrails_preserve_actual_measured_resource_use(case_brief) -> None:
+    invoker = ScriptedModelInvoker(
+        [
+            ScriptedStep(
+                parsed=CreatorResult(
+                    stop_decision=CreatorStopDecision.HUMAN_ESCALATION,
+                    rationale="Offline guardrail test.",
+                    next_action="Stop after the initial generator.",
+                ),
+                usage=ResourceUsage(
+                    input_tokens=3_165,
+                    output_tokens=4_214,
+                    reasoning_tokens=1_624,
+                    cached_input_tokens=3_162,
+                ),
+                latency_ms=78_191,
+            )
+        ]
+    )
+    submission = ConditionBWorkflow(
+        invoker=invoker,
+        runtime_config=approved_development_runtime(APPROVED_DEVELOPMENT_PROFILE_V2),
+        run_id_factory=lambda: "run_v2_guardrail_test",
+    ).run(brief=case_brief)
+    assert len(invoker.records) == 1
+    assert submission.trace.actual_usage.model_dump(mode="python") == {
+        "input_tokens": 3_165,
+        "output_tokens": 4_214,
+        "cached_input_tokens": 3_162,
+        "reasoning_tokens": 1_624,
+        "tool_calls": None,
+        "monetary_cost": None,
+        "currency": None,
+    }
+    assert submission.trace.calls[0].latency_ms == 78_191
+    assert submission.trace.max_total_tokens == 80_000
+    assert submission.trace.max_total_latency_ms == 600_000
 
 
 def test_preflight_rejects_nonignored_untracked_file(tmp_path: Path, case_brief, monkeypatch) -> None:
@@ -172,13 +271,50 @@ def test_preflight_rejects_effective_adapter_configuration_drift(
     drifted_value,
 ) -> None:
     _initialize_clean_branch_repo(tmp_path)
-    normalized = {**_EXPECTED_EFFECTIVE_CONFIGURATION, field: drifted_value}
+    normalized = {**_EXPECTED_EFFECTIVE_CONFIGURATION_V1, field: drifted_value}
     _configure_safe_preflight(monkeypatch, normalized)
     with pytest.raises(DevelopmentRunError, match="effective adapter configuration"):
         preflight_development_run(
             tmp_path,
             approved_development_runtime(APPROVED_DEVELOPMENT_PROFILE),
             case_brief,
+        )
+
+
+def test_v2_preflight_checks_effective_adapter_normalization(tmp_path: Path, case_brief, monkeypatch) -> None:
+    _initialize_clean_branch_repo(tmp_path)
+    _configure_safe_preflight(monkeypatch, _EXPECTED_EFFECTIVE_CONFIGURATION_V2)
+    preflight_development_run(
+        tmp_path,
+        approved_development_runtime(APPROVED_DEVELOPMENT_PROFILE_V2),
+        case_brief,
+        profile=APPROVED_DEVELOPMENT_PROFILE_V2,
+    )
+
+
+def test_v2_preflight_rejects_effective_adapter_drift(tmp_path: Path, case_brief, monkeypatch) -> None:
+    _initialize_clean_branch_repo(tmp_path)
+    drifted = {**_EXPECTED_EFFECTIVE_CONFIGURATION_V2, "timeout": 121}
+    _configure_safe_preflight(monkeypatch, drifted)
+    with pytest.raises(DevelopmentRunError, match="effective adapter configuration"):
+        preflight_development_run(
+            tmp_path,
+            approved_development_runtime(APPROVED_DEVELOPMENT_PROFILE_V2),
+            case_brief,
+            profile=APPROVED_DEVELOPMENT_PROFILE_V2,
+        )
+
+
+def test_cli_accepts_only_explicitly_approved_profiles() -> None:
+    parser = build_parser()
+    for profile in APPROVED_DEVELOPMENT_PROFILES:
+        args = parser.parse_args(
+            ["run-development", "--profile", profile, "--case", "case_dev_tools_before_redesign"]
+        )
+        assert args.profile == profile
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["run-development", "--profile", "phase1f-a-dev-v3", "--case", "case_dev_tools_before_redesign"]
         )
 
 

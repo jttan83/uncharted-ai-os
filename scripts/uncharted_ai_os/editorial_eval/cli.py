@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from .canonical import canonical_digest, canonical_json_bytes
 from .contracts import BlindReviewBundle, CaseBrief
 from .development_runner import (
-    APPROVED_DEVELOPMENT_PROFILE,
+    APPROVED_DEVELOPMENT_PROFILES,
     DevelopmentRunError,
     execute_approved_development_run,
 )
@@ -37,7 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
         "run-development",
         help="Run one approved contaminated development fixture with durable private evidence.",
     )
-    run_development.add_argument("--profile", required=True, choices=(APPROVED_DEVELOPMENT_PROFILE,))
+    run_development.add_argument(
+        "--profile",
+        required=True,
+        choices=APPROVED_DEVELOPMENT_PROFILES,
+        help="V1 is pre-calibration; V2 is capacity-calibrated from contaminated development diagnostics.",
+    )
     run_development.add_argument("--case", required=True)
     return parser
 
