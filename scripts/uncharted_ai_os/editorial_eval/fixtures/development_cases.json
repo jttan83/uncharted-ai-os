@@ -1,0 +1,128 @@
+[
+  {
+    "schema_version": "phase-1f-a-case-brief-v1",
+    "case_id": "case_dev_agreement_alignment",
+    "dataset_class": "development",
+    "source_record_version": "source_dev_v1",
+    "input_surface_version": "brief_dev_v1",
+    "cohort": "organic-instagram-reel-talking-head-en-v1",
+    "contamination_labels": ["NOT HOLDOUT", "CONTAMINATED", "DEVELOPMENT ONLY"],
+    "content_job": {
+      "schema_version": "phase-1f-a-content-job-v1",
+      "primary": "authority",
+      "secondary": "conversation",
+      "objective": "Help leaders distinguish surface agreement from operational alignment.",
+      "target_audience": "Corporate leaders and HR or L&D decision-makers.",
+      "desired_response": "Reconsider whether a quiet meeting actually produced commitment.",
+      "success_signals": ["Relevant saves", "Substantive decision-maker responses"],
+      "guardrail_signals": ["No invented research claim"],
+      "measurement_window": "Seven days after any separately approved publication.",
+      "limitations": ["No publication or Outcome measurement occurs in this development rehearsal."]
+    },
+    "insight": {
+      "state": "provided",
+      "value": "Agreement may hide unresolved trade-offs; alignment makes commitments and ownership explicit.",
+      "notes": null
+    },
+    "point_of_view": {
+      "state": "provided",
+      "value": "Leaders should stop treating silence as evidence of alignment.",
+      "notes": null
+    },
+    "attention_thesis_input": {
+      "state": "unresolved",
+      "value": null,
+      "notes": "The tested workflow must decide whether it can form a truthful attention thesis."
+    },
+    "evidence": [],
+    "guardrails": ["Never publish", "Frame professional judgment as judgment rather than universal fact"],
+    "voice_references": ["Direct, specific, calm, and willing to challenge a weak assumption."],
+    "portfolio_context": "Known and already-discussed Uncharted Lab topic.",
+    "production_assumptions": ["Single-speaker talking head", "Approximately 30-60 seconds"],
+    "attachments": []
+  },
+  {
+    "schema_version": "phase-1f-a-case-brief-v1",
+    "case_id": "case_dev_tools_before_redesign",
+    "dataset_class": "development",
+    "source_record_version": "source_dev_v1",
+    "input_surface_version": "brief_dev_v1",
+    "cohort": "organic-instagram-reel-talking-head-en-v1",
+    "contamination_labels": ["NOT HOLDOUT", "CONTAMINATED", "DEVELOPMENT ONLY"],
+    "content_job": {
+      "schema_version": "phase-1f-a-content-job-v1",
+      "primary": "positioning",
+      "secondary": "education",
+      "objective": "Show why buying AI tools before redesigning work is a weak transformation sequence.",
+      "target_audience": "Executives, transformation leaders, and HR or L&D decision-makers considering AI investment.",
+      "desired_response": "Examine the work and operating model before selecting more tools.",
+      "success_signals": ["Qualified conversation signals", "Relevant saves"],
+      "guardrail_signals": ["No fabricated transformation statistic", "No implication that tools are never useful"],
+      "measurement_window": "Seven days after any separately approved publication.",
+      "limitations": ["This development case has no platform telemetry or causal Outcome evidence."]
+    },
+    "insight": {
+      "state": "provided",
+      "value": "A tool-first programme often automates the visible task while leaving ownership, decisions, and handoffs untouched.",
+      "notes": null
+    },
+    "point_of_view": {
+      "state": "provided",
+      "value": "Map and redesign the work before treating an AI product purchase as transformation.",
+      "notes": null
+    },
+    "attention_thesis_input": {
+      "state": "unresolved",
+      "value": null,
+      "notes": "No pre-approved hook or attention mechanism is supplied."
+    },
+    "evidence": [],
+    "guardrails": ["Never publish", "Do not invent failure rates or vendor evidence", "Preserve reasonable trade-offs"],
+    "voice_references": ["Practical, plainspoken, commercially aware, and sceptical of technology theatre."],
+    "portfolio_context": "Known and already-discussed Uncharted Lab topic.",
+    "production_assumptions": ["Single-speaker talking head", "Approximately 30-60 seconds"],
+    "attachments": []
+  },
+  {
+    "schema_version": "phase-1f-a-case-brief-v1",
+    "case_id": "case_dev_oversized_workshops",
+    "dataset_class": "development",
+    "source_record_version": "source_dev_v1",
+    "input_surface_version": "brief_dev_v1",
+    "cohort": "organic-instagram-reel-talking-head-en-v1",
+    "contamination_labels": ["NOT HOLDOUT", "CONTAMINATED", "DEVELOPMENT ONLY"],
+    "content_job": {
+      "schema_version": "phase-1f-a-content-job-v1",
+      "primary": "education",
+      "secondary": "authority",
+      "objective": "Challenge the assumption that every large audience benefits from one oversized hands-on workshop.",
+      "target_audience": "Learning leaders, facilitators, and programme sponsors designing practical group learning.",
+      "desired_response": "Match participation architecture to group size instead of scaling one activity mechanically.",
+      "success_signals": ["Relevant saves", "Practitioner responses"],
+      "guardrail_signals": ["No universal maximum group-size claim"],
+      "measurement_window": "Seven days after any separately approved publication.",
+      "limitations": ["No representative workshop dataset is supplied in this development case."]
+    },
+    "insight": {
+      "state": "weak",
+      "value": "Very large hands-on workshops can create the appearance of participation without meaningful practice.",
+      "notes": "The idea is plausible but intentionally lacks a worked example and bounded conditions."
+    },
+    "point_of_view": {
+      "state": "provided",
+      "value": "When a group is too large for meaningful practice and feedback, redesign the participation model rather than calling the same format hands-on.",
+      "notes": null
+    },
+    "attention_thesis_input": {
+      "state": "missing",
+      "value": null,
+      "notes": "No attention thesis exists."
+    },
+    "evidence": [],
+    "guardrails": ["Never publish", "Do not invent a universal group-size threshold", "Acknowledge format and facilitation context"],
+    "voice_references": ["Concrete, candid, useful, and resistant to overclaiming."],
+    "portfolio_context": "Known and already-discussed Uncharted Lab topic.",
+    "production_assumptions": ["Single-speaker talking head", "Approximately 30-60 seconds"],
+    "attachments": []
+  }
+]
