@@ -7,12 +7,14 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
 from .canonical import canonical_json_bytes
+
+ModelT = TypeVar("ModelT", bound="BaseModel")
 
 EXPERIMENT_ROOT = Path("var/uncharted-ai-os/phase-1f-a")
 
@@ -102,6 +104,12 @@ class PrivateExperimentStorage:
         self._verify_no_symlink_path(source)
         with source.open("r", encoding="utf-8") as stream:
             return json.load(stream)
+
+    def read_model(self, relative_path: str | Path, model_type: type[ModelT]) -> ModelT:
+        """Read a strict Pydantic model through its JSON validation boundary."""
+        source = self._confined_path(relative_path)
+        self._verify_no_symlink_path(source)
+        return model_type.model_validate_json(source.read_bytes())
 
     def _confined_path(self, relative_path: str | Path) -> Path:
         raw = str(relative_path)

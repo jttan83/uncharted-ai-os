@@ -862,10 +862,20 @@ class RewriteBurden(str, Enum):
     NEW_PIECE = "effectively_new_piece"
 
 
+class CandidateUseDecision(str, Enum):
+    USE_AS_IS = "use_as_is"
+    MINOR_EDIT = "minor_edit"
+    MAJOR_REDEVELOPMENT = "major_redevelopment"
+    NOT_USE = "not_use"
+
+
 class Stage1Assessment(StrictModel):
     blind_candidate_id: Identifier
     category_appropriate: bool
+    use_decision: CandidateUseDecision
     rewrite_burden: RewriteBurden
+    main_strength: Text
+    main_weakness: Text
     confidence: Literal["low", "medium", "high"]
     reasons: tuple[Text, ...] = Field(min_length=1, max_length=10)
     preference_basis: Literal["editorial", "personal", "both"]
@@ -877,9 +887,43 @@ class Stage2Comparison(StrictModel):
     acceptable_candidate_ids: tuple[Identifier, ...]
     strongest_candidate_ids: tuple[Identifier, ...]
     least_rewrite_candidate_ids: tuple[Identifier, ...]
+    strongest_point_of_view_candidate_ids: tuple[Identifier, ...]
+    strongest_attention_candidate_ids: tuple[Identifier, ...]
+    strongest_payoff_candidate_ids: tuple[Identifier, ...]
+    strongest_voice_candidate_ids: tuple[Identifier, ...]
+    better_non_script_candidate_ids: tuple[Identifier, ...]
     reasons: tuple[Text, ...] = Field(min_length=1, max_length=20)
+    editorial_personal_difference: Text
+    uncertainty_and_change_evidence: Text
     confidence: Literal["low", "medium", "high"]
     locked_at: datetime
+
+
+class IdentityGuess(StrictModel):
+    blind_candidate_id: Identifier
+    guessed_condition: Condition
+    confidence: Literal["low", "medium", "high"]
+
+
+class PreUnblindingRecord(StrictModel):
+    schema_version: Literal["phase-1f-a-pre-unblinding-v1"] = "phase-1f-a-pre-unblinding-v1"
+    bundle_id: Identifier
+    identity_guesses: tuple[IdentityGuess, ...] = Field(min_length=1)
+    evidence_summary: Text
+    comparative_decision_record: Text
+    known_limitations: tuple[Text, ...] = Field(default_factory=tuple, max_length=20)
+    locked_at: datetime
+
+    @model_validator(mode="after")
+    def validate_guesses(self) -> PreUnblindingRecord:
+        candidate_ids = [guess.blind_candidate_id for guess in self.identity_guesses]
+        if len(candidate_ids) != len(set(candidate_ids)):
+            msg = "pre-unblinding identity guesses must be unique per candidate"
+            raise ValueError(msg)
+        if self.locked_at.tzinfo is None:
+            msg = "pre-unblinding lock timestamp must be timezone-aware"
+            raise ValueError(msg)
+        return self
 
 
 class HumanReview(StrictModel):

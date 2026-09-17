@@ -25,9 +25,11 @@ from scripts.uncharted_ai_os.editorial_eval.contracts import (
 )
 from scripts.uncharted_ai_os.editorial_eval.manifest import (
     ConditionBudget,
+    ContaminationRecord,
     ExperimentBudgets,
     FreezeManifest,
     FrozenDataGovernance,
+    FrozenEvidencePolicy,
     FrozenModelConfig,
     ManifestState,
     OperationalControls,
@@ -87,6 +89,7 @@ def make_manifest(**updates) -> FreezeManifest:
             reasoning="medium",
             temperature=0.2,
             seed_supported=True,
+            seed=7,
             timeout_seconds=30,
             max_output_tokens_per_call=2_000,
         ),
@@ -96,6 +99,7 @@ def make_manifest(**updates) -> FreezeManifest:
             reasoning="medium",
             temperature=0.2,
             seed_supported=True,
+            seed=7,
             timeout_seconds=30,
             max_output_tokens_per_call=2_000,
         ),
@@ -127,10 +131,26 @@ def make_manifest(**updates) -> FreezeManifest:
                 "case_dev_tools_before_redesign",
                 "case_dev_oversized_workshops",
             ),
+            contamination_register=tuple(
+                ContaminationRecord(
+                    case_id=case_id,
+                    topic=case_id,
+                    labels=("DEVELOPMENT ONLY", "CONTAMINATED", "NOT HOLDOUT"),
+                )
+                for case_id in (
+                    "case_dev_agreement_alignment",
+                    "case_dev_tools_before_redesign",
+                    "case_dev_oversized_workshops",
+                )
+            ),
             contaminated_topic_register_digest=TEST_DIGEST,
+            configuration_profile="phase1f-a-dev-v2",
+            treatment_source_digests={"A": TEST_DIGEST, "B": TEST_DIGEST, "C": TEST_DIGEST},
+            evidence_policy=FrozenEvidencePolicy(),
             evidence_snapshot_digest=TEST_DIGEST,
             permitted_tools=(),
             conditional_fact_check_rule_digest=TEST_DIGEST,
+            decision_rule_digest=TEST_DIGEST,
         ),
     }
     payload.update(updates)
@@ -206,6 +226,7 @@ def test_frozen_manifest_rejects_missing_values_placeholders_and_incomplete_budg
                 reasoning="medium",
                 temperature=0.2,
                 seed_supported=True,
+                seed=7,
                 timeout_seconds=30,
                 max_output_tokens_per_call=2_000,
             )

@@ -60,10 +60,15 @@ class FrozenModelConfig(StrictModel):
     provider: ShortText
     model_identifier: ShortText
     reasoning: ShortText
-    temperature: float = Field(ge=0, le=2)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    requested_temperature: float | None = Field(default=None, ge=0, le=2)
     seed_supported: bool
+    seed: int | None = None
     timeout_seconds: int = Field(gt=0)
     max_output_tokens_per_call: int = Field(gt=0)
+    provider_internal_retries: Literal[0] = 0
+    immutable_model_snapshot: bool = False
+    limitations: tuple[ShortText, ...] = ()
 
     @model_validator(mode="after")
     def reject_sensitive_configuration(self) -> FrozenModelConfig:
@@ -149,14 +154,46 @@ class FrozenDataGovernance(StrictModel):
     client_or_third_party_data_permitted: bool
 
 
+class ContaminationRecord(StrictModel):
+    case_id: Identifier
+    topic: ShortText
+    labels: tuple[Literal["DEVELOPMENT ONLY", "CONTAMINATED", "NOT HOLDOUT"], ...]
+
+    @model_validator(mode="after")
+    def validate_labels(self) -> ContaminationRecord:
+        if set(self.labels) != {"DEVELOPMENT ONLY", "CONTAMINATED", "NOT HOLDOUT"}:
+            msg = "every contamination record must carry all three exclusion labels"
+            raise ValueError(msg)
+        return self
+
+
+class FrozenEvidencePolicy(StrictModel):
+    live_research_permitted: Literal[False] = False
+    authoritative_evidence: Literal["CaseBrief.evidence snapshot only"] = "CaseBrief.evidence snapshot only"
+    evidence_reference_namespace: Literal["CaseBrief.evidence[].evidence_id"] = (
+        "CaseBrief.evidence[].evidence_id"
+    )
+    unsupported_material_claim_rule: Literal[
+        "qualify, remove, or return EVIDENCE REQUIRED"
+    ] = "qualify, remove, or return EVIDENCE REQUIRED"
+    deterministic_validation: Literal["fail_closed"] = "fail_closed"
+
+
 class OperationalControls(StrictModel):
     """Concrete controls not safely reducible to prompt or budget fields."""
 
     development_case_ids: tuple[Identifier, ...] = Field(min_length=1)
+    contamination_register: tuple[ContaminationRecord, ...] = Field(min_length=1)
     contaminated_topic_register_digest: Sha256Digest
+    configuration_profile: Literal["phase1f-a-dev-v2"]
+    treatment_source_digests: dict[str, Sha256Digest]
+    evidence_policy: FrozenEvidencePolicy
     evidence_snapshot_digest: Sha256Digest
     permitted_tools: tuple[ShortText, ...]
     conditional_fact_check_rule_digest: Sha256Digest
+    decision_rule_digest: Sha256Digest
+    human_review_form_version: Literal["phase-1f-a-human-review-v1"] = "phase-1f-a-human-review-v1"
+    reveal_custody_rule_version: Literal["phase-1f-a-reveal-custody-v1"] = "phase-1f-a-reveal-custody-v1"
     minimum_holdout_cases: Literal[6] = 6
     maximum_holdout_cases: Literal[10] = 10
     infrastructure_retry_limit: Literal[1] = 1
@@ -165,6 +202,13 @@ class OperationalControls(StrictModel):
     def validate_development_roster(self) -> OperationalControls:
         if len(self.development_case_ids) != len(set(self.development_case_ids)):
             msg = "development case roster must not contain duplicate IDs"
+            raise ValueError(msg)
+        registered_ids = tuple(record.case_id for record in self.contamination_register)
+        if len(registered_ids) != len(set(registered_ids)) or set(registered_ids) != set(self.development_case_ids):
+            msg = "contamination register must cover the development roster exactly once"
+            raise ValueError(msg)
+        if set(self.treatment_source_digests) != {"A", "B", "C"}:
+            msg = "treatment source digests must bind exactly A, B, and C"
             raise ValueError(msg)
         return self
 
@@ -245,6 +289,11 @@ class FreezeReceipt(StrictModel):
     manifest_schema_version: Literal[FREEZE_MANIFEST_SCHEMA_VERSION]
     budgets: ExperimentBudgets
     randomization_commitment: Sha256Digest
+    configuration_profile: Literal["phase1f-a-dev-v2"]
+    evidence_policy_digest: Sha256Digest
+    decision_rule_digest: Sha256Digest
+    human_review_form_version: Literal["phase-1f-a-human-review-v1"]
+    reveal_custody_rule_version: Literal["phase-1f-a-reveal-custody-v1"]
     freeze_digest: Sha256Digest
     freeze_timestamp: datetime
 
@@ -266,6 +315,7 @@ def create_freeze_receipt(manifest: FreezeManifest) -> FreezeReceipt:
     evaluator_model = _required(manifest.evaluator_model, "evaluator_model")
     budgets = _required(manifest.budgets, "budgets")
     randomization = _required(manifest.randomization, "randomization")
+    operational_controls = _required(manifest.operational_controls, "operational_controls")
     freeze_digest = _required(manifest.freeze_digest, "freeze_digest")
     freeze_timestamp = _required(manifest.freeze_timestamp, "freeze_timestamp")
     return FreezeReceipt(
@@ -281,6 +331,11 @@ def create_freeze_receipt(manifest: FreezeManifest) -> FreezeReceipt:
         manifest_schema_version=manifest.schema_version,
         budgets=budgets,
         randomization_commitment=randomization.seed_commitment,
+        configuration_profile=operational_controls.configuration_profile,
+        evidence_policy_digest=canonical_digest(operational_controls.evidence_policy),
+        decision_rule_digest=operational_controls.decision_rule_digest,
+        human_review_form_version=operational_controls.human_review_form_version,
+        reveal_custody_rule_version=operational_controls.reveal_custody_rule_version,
         freeze_digest=freeze_digest,
         freeze_timestamp=freeze_timestamp,
     )

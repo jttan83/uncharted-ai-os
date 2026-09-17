@@ -233,6 +233,14 @@ def approved_development_model_config(profile: str) -> InvocationModelConfig:
     )
 
 
+def approved_effective_adapter_configuration(profile: str) -> dict[str, object]:
+    """Return the frozen adapter-normalized settings without initializing a provider client."""
+    if profile not in APPROVED_DEVELOPMENT_PROFILES:
+        msg = "unsupported development profile"
+        raise ValueError(msg)
+    return dict(_EXPECTED_EFFECTIVE_ADAPTER_CONFIGURATION[profile])
+
+
 def approved_development_runtime(profile: str) -> RuntimeConfiguration:
     model_config = approved_development_model_config(profile)
     if profile == APPROVED_DEVELOPMENT_PROFILE_V1:
@@ -298,10 +306,7 @@ def preflight_development_run(
     *,
     profile: str = APPROVED_DEVELOPMENT_PROFILE,
 ) -> None:
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        msg = "OPENAI_API_KEY is not present or is empty"
-        raise DevelopmentRunError(msg)
-    assert_external_tracing_disabled()
+    preflight_approved_provider_runtime(runtime, profile=profile)
     git = shutil.which("git")
     if git is None:
         msg = "git executable is unavailable"
@@ -323,6 +328,18 @@ def preflight_development_run(
         msg = "working tree is not clean"
         raise DevelopmentRunError(msg)
     select_development_case(case.case_id, (case,))
+
+
+def preflight_approved_provider_runtime(
+    runtime: RuntimeConfiguration,
+    *,
+    profile: str,
+) -> None:
+    """Validate the shared approved provider boundary before any model call."""
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        msg = "OPENAI_API_KEY is not present or is empty"
+        raise DevelopmentRunError(msg)
+    assert_external_tracing_disabled()
     if runtime.primary_generator != runtime.evaluator:
         msg = "primary and evaluator model configurations differ"
         raise DevelopmentRunError(msg)

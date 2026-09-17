@@ -18,6 +18,7 @@ from scripts.uncharted_ai_os.editorial_eval.blinding import (
     select_repeatability_cases,
 )
 from scripts.uncharted_ai_os.editorial_eval.contracts import (
+    CandidateUseDecision,
     Condition,
     RevealEntry,
     RevealMapping,
@@ -159,7 +160,10 @@ def test_review_gate_enforces_stage_one_then_stage_two_then_reveal() -> None:
             Stage1Assessment(
                 blind_candidate_id=candidate.blind_candidate_id,
                 category_appropriate=True,
+                use_decision=CandidateUseDecision.MINOR_EDIT,
                 rewrite_burden=RewriteBurden.MINOR,
+                main_strength="Clear editorial judgment.",
+                main_weakness="Requires a localized edit.",
                 confidence="medium",
                 reasons=("Development rehearsal judgment.",),
                 preference_basis="editorial",
@@ -180,7 +184,14 @@ def test_review_gate_enforces_stage_one_then_stage_two_then_reveal() -> None:
                 acceptable_candidate_ids=candidate_ids,
                 strongest_candidate_ids=(candidate_ids[0],),
                 least_rewrite_candidate_ids=(candidate_ids[0],),
+                strongest_point_of_view_candidate_ids=(candidate_ids[0],),
+                strongest_attention_candidate_ids=(candidate_ids[0],),
+                strongest_payoff_candidate_ids=(candidate_ids[0],),
+                strongest_voice_candidate_ids=(candidate_ids[0],),
+                better_non_script_candidate_ids=(),
                 reasons=("Development-only comparison.",),
+                editorial_personal_difference="No difference in this synthetic review.",
+                uncertainty_and_change_evidence="No additional evidence specified.",
                 confidence="medium",
                 locked_at=LOCK_TIME,
             )

@@ -6,6 +6,7 @@ import pytest
 
 from scripts.uncharted_ai_os.editorial_eval.blinding import RevealCustodian, ReviewGate
 from scripts.uncharted_ai_os.editorial_eval.contracts import (
+    CandidateUseDecision,
     Condition,
     DatasetClass,
     NormalizedDecision,
@@ -70,7 +71,10 @@ def test_single_development_case_blinding_and_review_gating() -> None:
             Stage1Assessment(
                 blind_candidate_id=candidate.blind_candidate_id,
                 category_appropriate=True,
+                use_decision=CandidateUseDecision.MINOR_EDIT,
                 rewrite_burden=RewriteBurden.MINOR,
+                main_strength="Clear editorial judgment.",
+                main_weakness="Requires a localized edit.",
                 confidence="medium",
                 reasons=("Development-only scripted review.",),
                 preference_basis="editorial",
@@ -85,7 +89,14 @@ def test_single_development_case_blinding_and_review_gating() -> None:
             acceptable_candidate_ids=ids,
             strongest_candidate_ids=(ids[0],),
             least_rewrite_candidate_ids=(ids[0],),
+            strongest_point_of_view_candidate_ids=(ids[0],),
+            strongest_attention_candidate_ids=(ids[0],),
+            strongest_payoff_candidate_ids=(ids[0],),
+            strongest_voice_candidate_ids=(ids[0],),
+            better_non_script_candidate_ids=(),
             reasons=("Development-only scripted comparison.",),
+            editorial_personal_difference="No difference in this synthetic review.",
+            uncertainty_and_change_evidence="No additional evidence specified.",
             confidence="medium",
             locked_at=FIXED_TIME,
         )
@@ -282,7 +293,10 @@ def test_three_contaminated_cases_complete_offline_rehearsal(runtime_config) -> 
             Stage1Assessment(
                 blind_candidate_id=candidate.blind_candidate_id,
                 category_appropriate=True,
+                use_decision=CandidateUseDecision.MINOR_EDIT,
                 rewrite_burden=RewriteBurden.MINOR,
+                main_strength="Clear editorial judgment.",
+                main_weakness="Requires a localized edit.",
                 confidence="medium",
                 reasons=("Development-only scripted review.",),
                 preference_basis="editorial",
@@ -300,7 +314,14 @@ def test_three_contaminated_cases_complete_offline_rehearsal(runtime_config) -> 
                 acceptable_candidate_ids=ids,
                 strongest_candidate_ids=(ids[0],),
                 least_rewrite_candidate_ids=(ids[0],),
+                strongest_point_of_view_candidate_ids=(ids[0],),
+                strongest_attention_candidate_ids=(ids[0],),
+                strongest_payoff_candidate_ids=(ids[0],),
+                strongest_voice_candidate_ids=(ids[0],),
+                better_non_script_candidate_ids=(),
                 reasons=("Development-only scripted comparison.",),
+                editorial_personal_difference="No difference in this synthetic review.",
+                uncertainty_and_change_evidence="No additional evidence specified.",
                 confidence="medium",
                 locked_at=FIXED_TIME,
             )
