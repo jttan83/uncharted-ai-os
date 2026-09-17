@@ -28,7 +28,12 @@ def canonical_json_bytes(value: BaseModel | Any) -> bytes:
 
 def canonical_digest(value: BaseModel | Any) -> str:
     """Return a labelled SHA-256 digest of the canonical JSON bytes."""
-    return f"sha256:{hashlib.sha256(canonical_json_bytes(value)).hexdigest()}"
+    return canonical_digest_from_bytes(canonical_json_bytes(value))
+
+
+def canonical_digest_from_bytes(payload: bytes) -> str:
+    """Return a labelled SHA-256 digest of already-canonical JSON bytes."""
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def verify_canonical_digest(value: BaseModel | Any, expected: str) -> None:

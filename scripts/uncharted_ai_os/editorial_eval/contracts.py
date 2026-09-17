@@ -14,7 +14,9 @@ from .canonical import canonical_digest
 CONTRACT_SCHEMA_VERSION = "phase-1f-a-contracts-v1"
 CASE_BRIEF_SCHEMA_VERSION = "phase-1f-a-case-brief-v1"
 ARTIFACT_SCHEMA_VERSION = "phase-1f-a-artifact-v1"
-EVALUATION_SCHEMA_VERSION = "phase-1f-a-evaluation-v1"
+EVALUATOR_JUDGMENT_SCHEMA_VERSION = "phase-1f-a-evaluator-judgment-v1"
+EVALUATOR_BINDING_SCHEMA_VERSION = "phase-1f-a-evaluator-binding-v1"
+EVALUATION_SCHEMA_VERSION = "phase-1f-a-evaluation-v2"
 TRACE_SCHEMA_VERSION = "phase-1f-a-trace-v1"
 SUBMISSION_SCHEMA_VERSION = "phase-1f-a-submission-v1"
 BLIND_SCHEMA_VERSION = "phase-1f-a-blind-v1"
@@ -346,10 +348,10 @@ class DomainEvaluation(StrictModel):
     uncertainty: Text | None = None
 
 
-class EvaluationResult(StrictModel):
-    schema_version: Literal[EVALUATION_SCHEMA_VERSION] = EVALUATION_SCHEMA_VERSION
-    evaluation_id: Identifier
-    package_digest: Sha256Digest
+class EvaluatorJudgment(StrictModel):
+    """Model-authored semantic evaluation with no authoritative identity fields."""
+
+    schema_version: Literal[EVALUATOR_JUDGMENT_SCHEMA_VERSION] = EVALUATOR_JUDGMENT_SCHEMA_VERSION
     decision: InternalDecision
     domains: tuple[DomainEvaluation, ...] = Field(min_length=5, max_length=5)
     hard_failures: tuple[Text, ...] = Field(default_factory=tuple, max_length=20)
@@ -357,7 +359,7 @@ class EvaluationResult(StrictModel):
     rationale: Text
 
     @model_validator(mode="after")
-    def validate_domains_and_decision(self) -> EvaluationResult:
+    def validate_domains_and_decision(self) -> EvaluatorJudgment:
         names = [item.domain for item in self.domains]
         if set(names) != set(DomainName) or len(names) != len(set(names)):
             msg = "evaluation must contain every domain exactly once"
@@ -372,6 +374,27 @@ class EvaluationResult(StrictModel):
                 msg = "ready decision cannot coexist with a hard failure or unresolved domain"
                 raise ValueError(msg)
         return self
+
+
+class EvaluatorBinding(StrictModel):
+    """Host-owned provenance for one evaluator judgment and its exact invocation."""
+
+    schema_version: Literal[EVALUATOR_BINDING_SCHEMA_VERSION] = EVALUATOR_BINDING_SCHEMA_VERSION
+    package_digest: Sha256Digest
+    evaluator_call_id: Identifier
+    evaluator_input_digest: Sha256Digest
+
+
+class EvaluationResult(StrictModel):
+    """Persisted semantic judgment bound to deterministic host provenance."""
+
+    schema_version: Literal[EVALUATION_SCHEMA_VERSION] = EVALUATION_SCHEMA_VERSION
+    judgment: EvaluatorJudgment
+    binding: EvaluatorBinding
+
+    @property
+    def decision(self) -> InternalDecision:
+        return self.judgment.decision
 
 
 class ResourceUsage(StrictModel):
@@ -584,10 +607,7 @@ class CExecutionHistory(StrictModel):
             msg = "C history cannot contain more evaluations than packages"
             raise ValueError(msg)
         for index, evaluation in enumerate(self.evaluations):
-            is_failed_binding = (
-                self.terminal_state is CTerminalState.EVALUATOR_FAILURE and index == len(self.evaluations) - 1
-            )
-            if not is_failed_binding and evaluation.package_digest != canonical_digest(self.packages[index]):
+            if evaluation.binding.package_digest != canonical_digest(self.packages[index]):
                 msg = "each retained C evaluation must bind to its corresponding package"
                 raise ValueError(msg)
         if self.terminal_state is CTerminalState.PRE_PACKAGE_CREATOR_STOP and (
@@ -706,6 +726,70 @@ class ConditionSubmission(StrictModel):
             latest_evaluation = self.c_history.evaluations[-1] if self.c_history.evaluations else None
             if self.evaluator_result != latest_evaluation:
                 msg = "C evaluator result must match the latest retained evaluation"
+                raise ValueError(msg)
+            evaluator_calls = {
+                call.call_id: call
+                for call in self.trace.calls
+                if call.role == "c_evaluator" and call.failure is None
+            }
+            successful_creator_positions = [
+                index
+                for index, call in enumerate(self.trace.calls)
+                if call.role == "c_creator" and call.failure is None
+            ]
+            if len(successful_creator_positions) < len(packages):
+                msg = "each retained C package requires a preceding successful creator call"
+                raise ValueError(msg)
+            evaluation_call_positions: list[int] = []
+            trace_positions = {call.call_id: index for index, call in enumerate(self.trace.calls)}
+            for index, evaluation in enumerate(self.c_history.evaluations):
+                binding = evaluation.binding
+                call = evaluator_calls.get(binding.evaluator_call_id)
+                if call is None or call.run_id != self.run_id:
+                    msg = "C evaluation binding must identify a successful evaluator call in the current Run"
+                    raise ValueError(msg)
+                if call.input_digest != binding.evaluator_input_digest:
+                    msg = "C evaluation binding input digest must match its evaluator call"
+                    raise ValueError(msg)
+                evaluation_position = trace_positions[call.call_id]
+                creator_position = successful_creator_positions[index]
+                next_creator_position = (
+                    successful_creator_positions[index + 1]
+                    if index + 1 < len(successful_creator_positions)
+                    else None
+                )
+                evaluator_window_end = (
+                    next_creator_position if next_creator_position is not None else len(self.trace.calls)
+                )
+                successful_evaluator_calls = [
+                    candidate
+                    for position, candidate in enumerate(self.trace.calls)
+                    if creator_position < position < evaluator_window_end
+                    and candidate.role == "c_evaluator"
+                    and candidate.failure is None
+                ]
+                if len(successful_evaluator_calls) != 1:
+                    msg = (
+                        "each evaluated C package requires exactly one successful evaluator call "
+                        "in its revision window"
+                    )
+                    raise ValueError(msg)
+                if successful_evaluator_calls[0].call_id != binding.evaluator_call_id:
+                    msg = (
+                        "C evaluation binding must identify the unique successful evaluator call "
+                        "in its revision window"
+                    )
+                    raise ValueError(msg)
+                if evaluation_position <= creator_position or (
+                    next_creator_position is not None and evaluation_position >= next_creator_position
+                ):
+                    msg = "each C evaluation call must follow its package creator and precede the next revision"
+                    raise ValueError(msg)
+                evaluation_call_positions.append(evaluation_position)
+            duplicate_bindings = len(evaluation_call_positions) != len(set(evaluation_call_positions))
+            out_of_order_bindings = evaluation_call_positions != sorted(evaluation_call_positions)
+            if duplicate_bindings or out_of_order_bindings:
+                msg = "C evaluations must bind once each in evaluator-call order"
                 raise ValueError(msg)
             if self.normalized.decision is NormalizedDecision.PROCEED_CANDIDATE and (
                 latest_evaluation is None or latest_evaluation.decision is not InternalDecision.READY_FOR_HUMAN_APPROVAL

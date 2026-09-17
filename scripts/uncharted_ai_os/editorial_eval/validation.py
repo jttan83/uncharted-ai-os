@@ -10,6 +10,7 @@ from .contracts import (
     EditorialPackage,
     EvaluationResult,
     InternalDecision,
+    ModelCallTrace,
     StructuralValidationTrace,
     VerificationStatus,
 )
@@ -50,11 +51,30 @@ def validate_editorial_package(package: EditorialPackage, brief: CaseBrief) -> S
     )
 
 
-def validate_evaluation_binding(result: EvaluationResult, package: EditorialPackage, brief: CaseBrief) -> None:
+def validate_evaluation_binding(
+    result: EvaluationResult,
+    package: EditorialPackage,
+    brief: CaseBrief,
+    *,
+    evaluator_call: ModelCallTrace,
+    run_id: str,
+) -> None:
     """Ensure an evaluator result is attributable to exactly the package shown."""
     expected = canonical_digest(package)
-    if result.package_digest != expected:
+    if result.binding.package_digest != expected:
         msg = "evaluator result package digest does not match the evaluated package"
+        raise ValueError(msg)
+    if evaluator_call.role != "c_evaluator" or evaluator_call.failure is not None:
+        msg = "evaluation binding requires a successful evaluator call"
+        raise ValueError(msg)
+    if evaluator_call.run_id != run_id:
+        msg = "evaluation binding call does not belong to the current Run"
+        raise ValueError(msg)
+    if result.binding.evaluator_call_id != evaluator_call.call_id:
+        msg = "evaluation binding call ID does not match the evaluator invocation"
+        raise ValueError(msg)
+    if result.binding.evaluator_input_digest != evaluator_call.input_digest:
+        msg = "evaluation binding input digest does not match the evaluator invocation"
         raise ValueError(msg)
     if result.decision is InternalDecision.READY_FOR_HUMAN_APPROVAL:
         validation = validate_editorial_package(package, brief)

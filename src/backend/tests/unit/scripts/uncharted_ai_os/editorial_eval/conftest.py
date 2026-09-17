@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 
@@ -25,9 +26,12 @@ from scripts.uncharted_ai_os.editorial_eval.contracts import (
     EditorialPackage,
     EvaluationAnchor,
     EvaluationResult,
+    EvaluatorBinding,
+    EvaluatorJudgment,
     InputState,
     InternalDecision,
     MaterialInput,
+    ModelCallTrace,
     NormalizedDecision,
     NormalizedSubmission,
     ResourceUsage,
@@ -233,16 +237,11 @@ def make_package(version: str) -> EditorialPackage:
     )
 
 
-def make_evaluation(
-    package: EditorialPackage,
+def make_judgment(
     decision: InternalDecision = InternalDecision.READY_FOR_HUMAN_APPROVAL,
-    *,
-    evaluation_id: str = "evaluation_v1",
-) -> EvaluationResult:
+) -> EvaluatorJudgment:
     anchor = EvaluationAnchor.ACCEPTABLE
-    return EvaluationResult(
-        evaluation_id=evaluation_id,
-        package_digest=canonical_digest(package),
+    return EvaluatorJudgment(
         decision=decision,
         domains=tuple(
             DomainEvaluation(domain=domain, anchor=anchor, evidence=(f"Observable {domain.value} evidence.",))
@@ -255,11 +254,61 @@ def make_evaluation(
     )
 
 
+def make_model_call(
+    run_id: str,
+    suffix: str,
+    role: Literal["a_generator", "b_generator", "b_self_review", "c_creator", "c_evaluator"],
+) -> ModelCallTrace:
+    return ModelCallTrace(
+        call_id=f"call_{suffix}",
+        run_id=run_id,
+        role=role,
+        prompt_digest=TEST_DIGEST,
+        input_digest=TEST_DIGEST,
+        provider="offline",
+        model_identifier="offline-model",
+        reasoning="medium",
+        model_config_digest=TEST_DIGEST,
+        provider_internal_retries=0,
+        attempt_number=1,
+        infrastructure_retry=False,
+        started_at=FIXED_TIME,
+        ended_at=FIXED_TIME,
+        latency_ms=1,
+        usage=ResourceUsage(),
+    )
+
+
+def make_evaluator_call(run_id: str, suffix: str = "evaluation") -> ModelCallTrace:
+    return make_model_call(run_id, suffix, "c_evaluator")
+
+
+def make_bound_evaluation(
+    package: EditorialPackage,
+    call: ModelCallTrace,
+    decision: InternalDecision = InternalDecision.READY_FOR_HUMAN_APPROVAL,
+) -> EvaluationResult:
+    return EvaluationResult(
+        judgment=make_judgment(decision),
+        binding=EvaluatorBinding(
+            package_digest=canonical_digest(package),
+            evaluator_call_id=call.call_id,
+            evaluator_input_digest=call.input_digest,
+        ),
+    )
+
+
 def make_submission(condition: Condition, case_id: str, suffix: str) -> ConditionSubmission:
     run_id = f"run_{suffix}"
     brief_digest = TEST_DIGEST if condition in {Condition.B, Condition.C} else None
     package = make_package(f"blind_{suffix}") if condition in {Condition.B, Condition.C} else None
-    evaluation = make_evaluation(package) if condition is Condition.C and package is not None else None
+    creator_call = make_model_call(run_id, f"{suffix}_creator", "c_creator") if condition is Condition.C else None
+    evaluator_call = make_evaluator_call(run_id, f"{suffix}_evaluator") if condition is Condition.C else None
+    evaluation = (
+        make_bound_evaluation(package, evaluator_call)
+        if condition is Condition.C and package is not None and evaluator_call is not None
+        else None
+    )
     normalized = NormalizedSubmission(
         decision=NormalizedDecision.PROCEED_CANDIDATE,
         spoken_script=package.script.spoken_script if package is not None else f"Blind candidate script {suffix}.",
@@ -272,7 +321,7 @@ def make_submission(condition: Condition, case_id: str, suffix: str) -> Conditio
         condition=condition,
         case_brief_digest=brief_digest,
         input_surface_digest=TEST_DIGEST,
-        calls=(),
+        calls=(creator_call, evaluator_call) if creator_call is not None and evaluator_call is not None else (),
         substantive_revisions=0,
         max_substantive_revisions=0 if condition is Condition.A else 2,
         max_model_calls=7,

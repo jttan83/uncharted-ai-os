@@ -18,7 +18,7 @@ from scripts.uncharted_ai_os.editorial_eval.validation import (
     validate_evaluation_binding,
 )
 
-from .conftest import make_evaluation
+from .conftest import make_bound_evaluation, make_evaluator_call
 
 
 def test_claim_map_evidence_rules_are_deterministic(case_brief, editorial_package) -> None:
@@ -52,10 +52,17 @@ def test_claim_map_evidence_rules_are_deterministic(case_brief, editorial_packag
 
 
 def test_evaluator_result_is_bound_to_exact_package(case_brief, editorial_package) -> None:
-    evaluation = make_evaluation(editorial_package)
+    evaluator_call = make_evaluator_call("run_validation_binding")
+    evaluation = make_bound_evaluation(editorial_package, evaluator_call)
     changed = editorial_package.model_copy(update={"package_version": "package_changed"})
     with pytest.raises(ValueError, match="digest"):
-        validate_evaluation_binding(evaluation, changed, case_brief)
+        validate_evaluation_binding(
+            evaluation,
+            changed,
+            case_brief,
+            evaluator_call=evaluator_call,
+            run_id="run_validation_binding",
+        )
 
 
 def test_cli_parser_preserves_inspection_commands() -> None:

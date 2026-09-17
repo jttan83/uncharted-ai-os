@@ -37,7 +37,7 @@ from scripts.uncharted_ai_os.editorial_eval.workflows import (
     SelfReviewResult,
 )
 
-from .conftest import FIXED_TIME, make_evaluation, make_package, make_submission
+from .conftest import FIXED_TIME, make_judgment, make_package, make_submission
 from .test_workflows import fixed_clock, run_ids
 
 SECRET = bytes(reversed(range(32)))
@@ -248,10 +248,9 @@ def test_three_contaminated_cases_complete_offline_rehearsal(runtime_config) -> 
                     [
                         ScriptedStep(parsed=CreatorResult(package=package_c, rationale="C creator package.")),
                         ScriptedStep(
-                            parsed=make_evaluation(
-                                package_c,
-                                evaluation_id=f"evaluation_rehearsal_{index}",
-                            ).model_copy(update={"rationale": "INTERNAL_EVALUATOR_ONLY_MARKER"})
+                            parsed=make_judgment().model_copy(
+                                update={"rationale": "INTERNAL_EVALUATOR_ONLY_MARKER"}
+                            )
                         ),
                     ]
                 ),

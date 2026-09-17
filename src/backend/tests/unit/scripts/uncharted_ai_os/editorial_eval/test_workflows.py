@@ -52,7 +52,7 @@ from scripts.uncharted_ai_os.editorial_eval.workflows import (
     run_comparable_bc,
 )
 
-from .conftest import FIXED_TIME, make_evaluation, make_package, make_runtime_configuration
+from .conftest import FIXED_TIME, make_judgment, make_package, make_runtime_configuration
 
 
 def fixed_clock():
@@ -232,17 +232,13 @@ def test_one_total_retry_cannot_repeat_on_a_later_b_step(case_brief, runtime_con
 def test_condition_c_creator_evaluator_revision_and_fresh_evaluation(case_brief, runtime_config) -> None:
     first = make_package("c_first")
     revised = make_package("c_revised")
-    initial_evaluation = make_evaluation(
-        first,
-        InternalDecision.MAJOR_REVISION,
-        evaluation_id="evaluation_first_marker",
-    ).model_copy(
+    initial_evaluation = make_judgment(InternalDecision.MAJOR_REVISION).model_copy(
         update={
             "requested_actions": ("FIRST_EVALUATION_SECRET_MARKER",),
             "rationale": "FIRST_EVALUATION_SECRET_MARKER",
         }
     )
-    final_evaluation = make_evaluation(revised, evaluation_id="evaluation_final")
+    final_evaluation = make_judgment()
     invoker = ScriptedModelInvoker(
         [
             ScriptedStep(parsed=CreatorResult(package=first, rationale="Initial package.")),
@@ -259,10 +255,11 @@ def test_condition_c_creator_evaluator_revision_and_fresh_evaluation(case_brief,
     ).run(brief=case_brief)
     assert submission.first_pass_package == first
     assert submission.final_package == revised
-    assert submission.evaluator_result == final_evaluation
+    assert submission.evaluator_result is not None
+    assert submission.evaluator_result.judgment == final_evaluation
     assert submission.normalized.decision is NormalizedDecision.PROCEED_CANDIDATE
     assert submission.trace.substantive_revisions == 1
-    evaluator_records = [record for record in invoker.records if record.output_type.__name__ == "EvaluationResult"]
+    evaluator_records = [record for record in invoker.records if record.output_type.__name__ == "EvaluatorJudgment"]
     assert len(evaluator_records) == 2
     assert all(record.model_config.provider_internal_retries == 0 for record in invoker.records)
     assert "FIRST_EVALUATION_SECRET_MARKER" not in evaluator_records[1].messages[1].content
@@ -272,14 +269,7 @@ def test_condition_c_creator_evaluator_revision_and_fresh_evaluation(case_brief,
 
 def test_condition_c_honors_two_revision_limit(case_brief, runtime_config) -> None:
     packages = [make_package(f"limit_{index}") for index in range(3)]
-    evaluations = [
-        make_evaluation(
-            package,
-            InternalDecision.MAJOR_REVISION,
-            evaluation_id=f"evaluation_limit_{index}",
-        )
-        for index, package in enumerate(packages)
-    ]
+    evaluations = [make_judgment(InternalDecision.MAJOR_REVISION) for _package in packages]
     invoker = ScriptedModelInvoker(
         [
             ScriptedStep(parsed=CreatorResult(package=packages[0], rationale="Initial.")),
@@ -302,7 +292,7 @@ def test_condition_c_honors_two_revision_limit(case_brief, runtime_config) -> No
     assert invoker.remaining_steps == 0
     assert submission.c_history is not None
     assert submission.c_history.packages == tuple(packages)
-    assert submission.c_history.evaluations == tuple(evaluations)
+    assert tuple(item.judgment for item in submission.c_history.evaluations) == tuple(evaluations)
     assert submission.c_history.terminal_state is CTerminalState.REVISION_BUDGET_EXHAUSTED
 
 
@@ -360,11 +350,7 @@ def test_condition_c_retains_evaluator_failure_after_valid_package(case_brief, r
 
 def test_condition_c_revision_stop_retains_prior_package_and_evaluation(case_brief, runtime_config) -> None:
     package = make_package("before_revision_stop")
-    evaluation = make_evaluation(
-        package,
-        InternalDecision.MAJOR_REVISION,
-        evaluation_id="evaluation_before_revision_stop",
-    )
+    evaluation = make_judgment(InternalDecision.MAJOR_REVISION)
     submission = ConditionCWorkflow(
         invoker=ScriptedModelInvoker(
             [
@@ -385,7 +371,7 @@ def test_condition_c_revision_stop_retains_prior_package_and_evaluation(case_bri
     ).run(brief=case_brief)
     assert submission.c_history is not None
     assert submission.c_history.packages == (package,)
-    assert submission.c_history.evaluations == (evaluation,)
+    assert tuple(item.judgment for item in submission.c_history.evaluations) == (evaluation,)
     assert submission.c_history.creator_stops[0].phase == "revision"
     assert submission.c_history.terminal_state is CTerminalState.REVISION_CREATOR_STOP
     assert submission.final_package == package
@@ -408,11 +394,7 @@ def test_condition_c_retains_invalid_revised_package(case_brief, runtime_config)
         ),
     )
     revised = make_package("invalid_revision").model_copy(update={"claim_map": invalid_claim_map})
-    evaluation = make_evaluation(
-        first,
-        InternalDecision.MAJOR_REVISION,
-        evaluation_id="evaluation_before_invalid_revision",
-    )
+    evaluation = make_judgment(InternalDecision.MAJOR_REVISION)
     submission = ConditionCWorkflow(
         invoker=ScriptedModelInvoker(
             [
@@ -427,7 +409,7 @@ def test_condition_c_retains_invalid_revised_package(case_brief, runtime_config)
     ).run(brief=case_brief)
     assert submission.c_history is not None
     assert submission.c_history.packages == (first, revised)
-    assert submission.c_history.evaluations == (evaluation,)
+    assert tuple(item.judgment for item in submission.c_history.evaluations) == (evaluation,)
     assert submission.c_history.terminal_state is CTerminalState.DETERMINISTIC_VALIDATION_FAILURE
     assert submission.final_package == revised
     assert submission.normalized.decision is NormalizedDecision.EVIDENCE_REQUIRED
@@ -445,11 +427,7 @@ def test_condition_c_retains_parsed_revision_when_token_budget_exhausts(case_bri
     runtime_config = make_runtime_configuration(model_config, bc_limits=limits)
     first = make_package("budget_first")
     revised = make_package("budget_revised")
-    evaluation = make_evaluation(
-        first,
-        InternalDecision.MAJOR_REVISION,
-        evaluation_id="evaluation_budget",
-    )
+    evaluation = make_judgment(InternalDecision.MAJOR_REVISION)
     submission = ConditionCWorkflow(
         invoker=ScriptedModelInvoker(
             [
@@ -473,7 +451,7 @@ def test_condition_c_retains_parsed_revision_when_token_budget_exhausts(case_bri
     ).run(brief=case_brief)
     assert submission.c_history is not None
     assert submission.c_history.packages == (first, revised)
-    assert submission.c_history.evaluations == (evaluation,)
+    assert tuple(item.judgment for item in submission.c_history.evaluations) == (evaluation,)
     assert submission.c_history.terminal_state is CTerminalState.RESOURCE_BUDGET_EXHAUSTED
     assert submission.trace.failures[-1].failure_type == "token_budget_exceeded"
 
@@ -580,7 +558,7 @@ def test_bc_actual_consumption_is_measured_independently(case_brief, runtime_con
                     usage=ResourceUsage(input_tokens=100, output_tokens=50),
                 ),
                 ScriptedStep(
-                    parsed=make_evaluation(package_c, evaluation_id="evaluation_usage_c"),
+                    parsed=make_judgment(),
                     usage=ResourceUsage(input_tokens=80, output_tokens=30),
                 ),
             ]
@@ -777,7 +755,7 @@ def test_condition_c_uses_separately_traced_evaluator_configuration(case_brief, 
     invoker = ScriptedModelInvoker(
         [
             ScriptedStep(parsed=CreatorResult(package=package, rationale="Creator result.")),
-            ScriptedStep(parsed=make_evaluation(package, evaluation_id="evaluation_separate")),
+            ScriptedStep(parsed=make_judgment()),
         ]
     )
     runtime_config = make_runtime_configuration(
@@ -796,13 +774,12 @@ def test_condition_c_uses_separately_traced_evaluator_configuration(case_brief, 
     assert submission.trace.calls[0].model_config_digest != submission.trace.calls[1].model_config_digest
 
 
-def test_evaluator_binding_failure_becomes_safe_terminal_trace(case_brief, model_config, bc_limits) -> None:
+def test_evaluator_binding_is_host_owned_after_semantic_judgment(case_brief, model_config, bc_limits) -> None:
     package = make_package("binding_failure")
-    wrong_package = make_package("other_package")
     invoker = ScriptedModelInvoker(
         [
             ScriptedStep(parsed=CreatorResult(package=package, rationale="Creator result.")),
-            ScriptedStep(parsed=make_evaluation(wrong_package, evaluation_id="evaluation_wrong_binding")),
+            ScriptedStep(parsed=make_judgment()),
         ]
     )
     runtime_config = make_runtime_configuration(model_config, bc_limits=bc_limits)
@@ -812,12 +789,12 @@ def test_evaluator_binding_failure_becomes_safe_terminal_trace(case_brief, model
         clock=fixed_clock,
         run_id_factory=run_ids("binding_failure"),
     ).run(brief=case_brief)
-    assert submission.normalized.decision is NormalizedDecision.HUMAN_JUDGMENT_REQUIRED
+    assert submission.normalized.decision is NormalizedDecision.PROCEED_CANDIDATE
     assert submission.evaluator_result is not None
     assert submission.c_history is not None
-    assert submission.c_history.terminal_state is CTerminalState.EVALUATOR_FAILURE
-    assert submission.c_history.evaluator_failures[0].failure_type == "evaluator_binding_failure"
-    assert submission.trace.failures[0].failure_type == "evaluator_binding_failure"
+    assert submission.evaluator_result.binding.evaluator_call_id == submission.trace.calls[1].call_id
+    assert submission.evaluator_result.binding.evaluator_input_digest == submission.trace.calls[1].input_digest
+    assert submission.c_history.terminal_state is CTerminalState.EVALUATOR_DECISION
     assert len(submission.trace.calls) == 2
 
 
@@ -1039,7 +1016,7 @@ def test_presentation_failure_diagnostics_retain_only_safe_location() -> None:
 )
 def test_internal_decisions_map_to_neutral_vocabulary(internal, external) -> None:
     package = make_package("mapping")
-    evaluation = make_evaluation(package, internal)
+    evaluation = make_judgment(internal)
     normalized = normalize_internal_decision(evaluation, package)
     assert normalized.decision is external
     serialized = normalized.model_dump_json()

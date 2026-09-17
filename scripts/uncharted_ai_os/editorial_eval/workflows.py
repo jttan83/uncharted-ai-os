@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence  # noqa: TC003
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -11,7 +12,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-from .canonical import assert_byte_identical_case_briefs, canonical_digest, canonical_json_bytes
+from .canonical import (
+    assert_byte_identical_case_briefs,
+    canonical_digest,
+    canonical_digest_from_bytes,
+    canonical_json_bytes,
+)
 from .contracts import (
     CaseBrief,
     CExecutionHistory,
@@ -22,6 +28,8 @@ from .contracts import (
     CTerminalState,
     EditorialPackage,
     EvaluationResult,
+    EvaluatorBinding,
+    EvaluatorJudgment,
     FailureInfo,
     InternalDecision,
     ModelCallTrace,
@@ -139,6 +147,19 @@ class WorkflowExecutionError(RuntimeError):
         self.failure = failure
 
 
+@dataclass(frozen=True)
+class _ParsedResultRecord:
+    role: Literal["a_generator", "b_generator", "b_self_review", "c_creator", "c_evaluator"]
+    call_id: str
+    value: BaseModel
+
+
+@dataclass(frozen=True)
+class _EvaluatorRequest:
+    messages: tuple[ModelMessage, ModelMessage]
+    package_digest: str
+
+
 class _CallTracker:
     def __init__(
         self,
@@ -157,7 +178,7 @@ class _CallTracker:
         self.calls: list[ModelCallTrace] = []
         self.validations: list[StructuralValidationTrace] = []
         self.failures: list[FailureInfo] = []
-        self.parsed_results: list[tuple[str, BaseModel]] = []
+        self.parsed_results: list[_ParsedResultRecord] = []
         self.limitations: list[str] = []
         self.infrastructure_retries = 0
 
@@ -169,6 +190,23 @@ class _CallTracker:
         output_type: type[OutputT],
         model_config: InvocationModelConfig | None = None,
     ) -> OutputT:
+        parsed, _call = self.invoke_with_trace(
+            role=role,
+            messages=messages,
+            output_type=output_type,
+            model_config=model_config,
+        )
+        return parsed
+
+    def invoke_with_trace(
+        self,
+        *,
+        role: Literal["a_generator", "b_generator", "b_self_review", "c_creator", "c_evaluator"],
+        messages: Sequence[ModelMessage],
+        output_type: type[OutputT],
+        model_config: InvocationModelConfig | None = None,
+    ) -> tuple[OutputT, ModelCallTrace]:
+        """Return a parsed result with the exact successful call trace that produced it."""
         assert_external_tracing_disabled()
         active_model_config = model_config or self.model_config
         attempt = 1
@@ -189,7 +227,7 @@ class _CallTracker:
                 attempt_number=attempt,
             )
             ended = self.clock()
-            self._record_call(
+            call = self._record_call(
                 role=role,
                 messages=messages,
                 response=response,
@@ -198,7 +236,9 @@ class _CallTracker:
                 ended=ended,
             )
             if response.parsed is not None:
-                self.parsed_results.append((role, response.parsed))
+                self.parsed_results.append(
+                    _ParsedResultRecord(role=role, call_id=call.call_id, value=response.parsed)
+                )
             try:
                 self._enforce_resource_limits()
             except WorkflowExecutionError:
@@ -206,7 +246,7 @@ class _CallTracker:
                     self._record_retry_decision("resource_ceiling")
                 raise
             if response.parsed is not None:
-                return response.parsed
+                return response.parsed, call
             if response.failure is None:
                 msg = "model response contract lost both result and failure"
                 raise RuntimeError(msg)
@@ -248,31 +288,70 @@ class _CallTracker:
         model_config: InvocationModelConfig,
         started: datetime,
         ended: datetime,
-    ) -> None:
+    ) -> ModelCallTrace:
         sequence = len(self.calls) + 1
         call_id = f"call_{self.run_id.removeprefix('run_')[:16]}_{sequence:02d}"
-        self.calls.append(
-            ModelCallTrace(
-                call_id=call_id,
-                run_id=self.run_id,
-                role=role,
-                prompt_digest=canonical_digest(messages[0].content),
-                input_digest=canonical_digest([message.model_dump(mode="json") for message in messages]),
-                provider=model_config.provider,
-                model_identifier=model_config.model_identifier,
-                reasoning=model_config.reasoning,
-                model_config_digest=canonical_digest(model_config),
-                provider_internal_retries=model_config.provider_internal_retries,
-                attempt_number=response.attempt_number,
-                infrastructure_retry=response.attempt_number > 1,
-                infrastructure_retry_eligible=bool(response.failure and response.failure.retryable),
-                started_at=started,
-                ended_at=ended,
-                latency_ms=response.latency_ms,
-                usage=response.usage,
-                failure=response.failure,
-            )
+        call = ModelCallTrace(
+            call_id=call_id,
+            run_id=self.run_id,
+            role=role,
+            prompt_digest=canonical_digest(messages[0].content),
+            input_digest=canonical_digest([message.model_dump(mode="json") for message in messages]),
+            provider=model_config.provider,
+            model_identifier=model_config.model_identifier,
+            reasoning=model_config.reasoning,
+            model_config_digest=canonical_digest(model_config),
+            provider_internal_retries=model_config.provider_internal_retries,
+            attempt_number=response.attempt_number,
+            infrastructure_retry=response.attempt_number > 1,
+            infrastructure_retry_eligible=bool(response.failure and response.failure.retryable),
+            started_at=started,
+            ended_at=ended,
+            latency_ms=response.latency_ms,
+            usage=response.usage,
+            failure=response.failure,
         )
+        self.calls.append(call)
+        return call
+
+    def bind_evaluator_judgment(
+        self,
+        *,
+        judgment: EvaluatorJudgment,
+        call: ModelCallTrace,
+        package_digest: str,
+    ) -> EvaluationResult:
+        """Bind one semantic judgment to the exact host-recorded evaluator invocation."""
+        if call.run_id != self.run_id or call.role != "c_evaluator" or call.failure is not None:
+            msg = "evaluator binding requires a successful evaluator call in the current Run"
+            raise ValueError(msg)
+        matching_calls = [recorded for recorded in self.calls if recorded.call_id == call.call_id]
+        if len(matching_calls) != 1 or matching_calls[0] is not call:
+            msg = "evaluator binding call must be the exact trace returned by the invocation"
+            raise ValueError(msg)
+        matching_results = [
+            (index, record)
+            for index, record in enumerate(self.parsed_results)
+            if record.call_id == call.call_id and record.role == "c_evaluator" and record.value is judgment
+        ]
+        if len(matching_results) != 1:
+            msg = "evaluator binding judgment must be the exact parsed result from its invocation"
+            raise ValueError(msg)
+        result = EvaluationResult(
+            judgment=judgment,
+            binding=EvaluatorBinding(
+                package_digest=package_digest,
+                evaluator_call_id=call.call_id,
+                evaluator_input_digest=call.input_digest,
+            ),
+        )
+        index, record = matching_results[0]
+        self.parsed_results[index] = _ParsedResultRecord(
+            role=record.role,
+            call_id=record.call_id,
+            value=result,
+        )
+        return result
 
     def _record_retry_decision(
         self,
@@ -674,18 +753,26 @@ class ConditionCWorkflow(_WorkflowBase):
         while True:
             # A fresh evaluator context contains only the shared/evaluator prompt,
             # canonical brief, and current package. No prior evaluation is passed.
-            evaluation_context = (
-                f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
-                f"Current editorial package JSON:\n{canonical_json_bytes(current).decode()}"
-            )
-            evaluation = tracker.invoke(
+            request = _build_evaluator_request(brief_text, current)
+            judgment, evaluator_call = tracker.invoke_with_trace(
                 role="c_evaluator",
-                messages=_messages(PromptName.CONDITION_C_EVALUATOR, evaluation_context),
-                output_type=EvaluationResult,
+                messages=request.messages,
+                output_type=EvaluatorJudgment,
                 model_config=self.evaluator_model_config,
             )
             try:
-                validate_evaluation_binding(evaluation, current, brief)
+                evaluation = tracker.bind_evaluator_judgment(
+                    judgment=judgment,
+                    call=evaluator_call,
+                    package_digest=request.package_digest,
+                )
+                validate_evaluation_binding(
+                    evaluation,
+                    current,
+                    brief,
+                    evaluator_call=evaluator_call,
+                    run_id=tracker.run_id,
+                )
             except ValueError as exc:
                 failure = FailureInfo(
                     failure_type="evaluator_binding_failure",
@@ -695,7 +782,11 @@ class ConditionCWorkflow(_WorkflowBase):
                 tracker.failures.append(failure)
                 raise WorkflowExecutionError(failure) from exc
             if evaluation.decision not in {InternalDecision.MINOR_REVISION, InternalDecision.MAJOR_REVISION}:
-                return normalize_internal_decision(evaluation, current), revisions, CTerminalState.EVALUATOR_DECISION
+                return (
+                    normalize_internal_decision(evaluation.judgment, current),
+                    revisions,
+                    CTerminalState.EVALUATOR_DECISION,
+                )
             if revisions >= self.limits.max_substantive_revisions:
                 return (
                     _candidate_submission(
@@ -709,7 +800,7 @@ class ConditionCWorkflow(_WorkflowBase):
             revision_context = (
                 f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
                 f"Current editorial package JSON:\n{canonical_json_bytes(current).decode()}\n\n"
-                f"Evaluator result JSON:\n{canonical_json_bytes(evaluation).decode()}"
+                f"Evaluator result JSON:\n{canonical_json_bytes(evaluation.judgment).decode()}"
             )
             revised = tracker.invoke(
                 role="c_creator",
@@ -782,12 +873,25 @@ def _messages(prompt_name: PromptName, user_content: str) -> tuple[ModelMessage,
     return ModelMessage(role="system", content=system), ModelMessage(role="user", content=user_content)
 
 
+def _build_evaluator_request(brief_text: str, package: EditorialPackage) -> _EvaluatorRequest:
+    package_bytes = canonical_json_bytes(package)
+    evaluation_context = (
+        f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
+        f"Current editorial package JSON:\n{package_bytes.decode()}"
+    )
+    return _EvaluatorRequest(
+        messages=_messages(PromptName.CONDITION_C_EVALUATOR, evaluation_context),
+        package_digest=canonical_digest_from_bytes(package_bytes),
+    )
+
+
 def _build_c_history(tracker: _CallTracker, terminal_state: CTerminalState) -> CExecutionHistory:
     packages: list[EditorialPackage] = []
     evaluations: list[EvaluationResult] = []
     creator_stops: list[CreatorStopTrace] = []
-    for role, parsed in tracker.parsed_results:
-        if role == "c_creator" and isinstance(parsed, CreatorResult):
+    for record in tracker.parsed_results:
+        if record.role == "c_creator" and isinstance(record.value, CreatorResult):
+            parsed = record.value
             if parsed.package is not None:
                 packages.append(parsed.package)
             elif parsed.stop_decision is not None and parsed.next_action is not None:
@@ -799,8 +903,8 @@ def _build_c_history(tracker: _CallTracker, terminal_state: CTerminalState) -> C
                         next_action=parsed.next_action,
                     )
                 )
-        elif role == "c_evaluator" and isinstance(parsed, EvaluationResult):
-            evaluations.append(parsed)
+        elif record.role == "c_evaluator" and isinstance(record.value, EvaluationResult):
+            evaluations.append(record.value)
 
     evaluator_failures = [
         call.failure for call in tracker.calls if call.role == "c_evaluator" and call.failure is not None
@@ -862,7 +966,7 @@ def _normalize_self_review_stop(review: SelfReviewResult) -> NormalizedSubmissio
     return NormalizedSubmission(decision=decision, explanation=review.rationale, next_action=review.rationale)
 
 
-def normalize_internal_decision(evaluation: EvaluationResult, package: EditorialPackage) -> NormalizedSubmission:
+def normalize_internal_decision(evaluation: EvaluatorJudgment, package: EditorialPackage) -> NormalizedSubmission:
     if evaluation.decision is InternalDecision.READY_FOR_HUMAN_APPROVAL:
         return _candidate_submission(
             NormalizedDecision.PROCEED_CANDIDATE,
