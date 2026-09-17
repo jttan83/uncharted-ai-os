@@ -27,6 +27,11 @@ Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{2,127}$")]
 Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+EVIDENCE_REFS_DESCRIPTION = (
+    "Every value must exactly match an existing CaseBrief.evidence[].evidence_id. "
+    "CaseBrief field names, paths, aliases, insight IDs, point-of-view fields, content_job fields, objectives, "
+    "and guardrails are not evidence IDs. When the CaseBrief contains no evidence items, evidence_refs must be []."
+)
 
 
 class StrictModel(BaseModel):
@@ -269,7 +274,11 @@ class Claim(StrictModel):
     claim_id: Identifier
     passage: Text
     claim_type: ClaimType
-    evidence_refs: tuple[Identifier, ...] = Field(default_factory=tuple, max_length=20)
+    evidence_refs: tuple[Identifier, ...] = Field(
+        default_factory=tuple,
+        max_length=20,
+        description=EVIDENCE_REFS_DESCRIPTION,
+    )
     verification_status: VerificationStatus
     decision: ClaimDecision
     uncertainty: Text | None = None

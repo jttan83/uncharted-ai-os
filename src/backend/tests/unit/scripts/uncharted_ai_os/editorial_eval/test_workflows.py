@@ -13,6 +13,7 @@ from scripts.uncharted_ai_os.editorial_eval.contracts import (
     ClaimType,
     CreatorStopDecision,
     CTerminalState,
+    EvidenceItem,
     FailureDiagnostics,
     FailureInfo,
     InternalDecision,
@@ -137,6 +138,9 @@ def test_condition_b_is_strong_single_agent_with_self_review_and_revision(case_b
     ]
     assert all(record.model_config.provider_internal_retries == 0 for record in invoker.records)
     assert len(submission.trace.structural_validations) == 2
+    creator_records = [record for record in invoker.records if record.output_type is CreatorResult]
+    assert len(creator_records) == 2
+    assert all("Allowed evidence IDs: []" in record.messages[1].content for record in creator_records)
 
 
 def test_condition_b_can_stop_without_script(case_brief, runtime_config) -> None:
@@ -160,6 +164,50 @@ def test_condition_b_can_stop_without_script(case_brief, runtime_config) -> None
     assert submission.normalized.decision is NormalizedDecision.EVIDENCE_REQUIRED
     assert submission.normalized.spoken_script is None
     assert len(submission.trace.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("evidence_ids", "expected_allowlist"),
+    [
+        ((), "Allowed evidence IDs: []"),
+        (("evidence_alpha", "evidence_beta"), 'Allowed evidence IDs: ["evidence_alpha","evidence_beta"]'),
+    ],
+)
+def test_b_and_c_creators_receive_identical_case_evidence_allowlist(
+    case_brief, runtime_config, evidence_ids, expected_allowlist
+) -> None:
+    evidence = tuple(
+        EvidenceItem(evidence_id=evidence_id, description=f"Synthetic evidence {index}.", source="Offline fixture")
+        for index, evidence_id in enumerate(evidence_ids, start=1)
+    )
+    brief = case_brief.model_copy(update={"evidence": evidence})
+    stop = CreatorResult(
+        stop_decision=CreatorStopDecision.HUMAN_ESCALATION,
+        rationale="Stop after capturing the creator request.",
+        next_action="Use the offline request record for comparison.",
+    )
+    invoker_b = ScriptedModelInvoker([ScriptedStep(parsed=stop)])
+    invoker_c = ScriptedModelInvoker([ScriptedStep(parsed=stop)])
+
+    ConditionBWorkflow(
+        invoker=invoker_b,
+        runtime_config=runtime_config,
+        clock=fixed_clock,
+        run_id_factory=run_ids("b_evidence_allowlist"),
+    ).run(brief=brief)
+    ConditionCWorkflow(
+        invoker=invoker_c,
+        runtime_config=runtime_config,
+        clock=fixed_clock,
+        run_id_factory=run_ids("c_evidence_allowlist"),
+    ).run(brief=brief)
+
+    b_creator_context = invoker_b.records[0].messages[1].content
+    c_creator_context = invoker_c.records[0].messages[1].content
+    assert b_creator_context == c_creator_context
+    assert expected_allowlist in b_creator_context
+    assert "CaseBrief field names, paths, aliases" in b_creator_context
+    assert "evidence_refs must be []" in b_creator_context
 
 
 def test_condition_b_executes_full_two_revision_path(case_brief, runtime_config) -> None:
@@ -260,7 +308,10 @@ def test_condition_c_creator_evaluator_revision_and_fresh_evaluation(case_brief,
     assert submission.normalized.decision is NormalizedDecision.PROCEED_CANDIDATE
     assert submission.trace.substantive_revisions == 1
     evaluator_records = [record for record in invoker.records if record.output_type.__name__ == "EvaluatorJudgment"]
+    creator_records = [record for record in invoker.records if record.output_type is CreatorResult]
     assert len(evaluator_records) == 2
+    assert len(creator_records) == 2
+    assert all("Allowed evidence IDs: []" in record.messages[1].content for record in creator_records)
     assert all(record.model_config.provider_internal_retries == 0 for record in invoker.records)
     assert "FIRST_EVALUATION_SECRET_MARKER" not in evaluator_records[1].messages[1].content
     assert "A outputs" not in evaluator_records[1].messages[1].content

@@ -19,6 +19,7 @@ from .canonical import (
     canonical_json_bytes,
 )
 from .contracts import (
+    EVIDENCE_REFS_DESCRIPTION,
     CaseBrief,
     CExecutionHistory,
     Condition,
@@ -551,7 +552,7 @@ class ConditionBWorkflow(_WorkflowBase):
         try:
             result = tracker.invoke(
                 role="b_generator",
-                messages=_messages(PromptName.CONDITION_B, f"Canonical CaseBrief JSON:\n{brief_text}"),
+                messages=_messages(PromptName.CONDITION_B, _creator_case_context(brief, brief_text)),
                 output_type=CreatorResult,
             )
             if result.stop_decision is not None:
@@ -621,7 +622,7 @@ class ConditionBWorkflow(_WorkflowBase):
                     revisions,
                 )
             revision_context = (
-                f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
+                f"{_creator_case_context(brief, brief_text)}\n\n"
                 f"Current package JSON:\n{canonical_json_bytes(current).decode()}\n\n"
                 f"Material self-review:\n{canonical_json_bytes(review).decode()}\n\n"
                 "Return a complete revised package or a proportionate stop decision."
@@ -694,7 +695,7 @@ class ConditionCWorkflow(_WorkflowBase):
         try:
             created = tracker.invoke(
                 role="c_creator",
-                messages=_messages(PromptName.CONDITION_C_CREATOR, f"Canonical CaseBrief JSON:\n{brief_text}"),
+                messages=_messages(PromptName.CONDITION_C_CREATOR, _creator_case_context(brief, brief_text)),
                 output_type=CreatorResult,
             )
             if created.stop_decision is not None:
@@ -798,7 +799,7 @@ class ConditionCWorkflow(_WorkflowBase):
                     CTerminalState.REVISION_BUDGET_EXHAUSTED,
                 )
             revision_context = (
-                f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
+                f"{_creator_case_context(brief, brief_text)}\n\n"
                 f"Current editorial package JSON:\n{canonical_json_bytes(current).decode()}\n\n"
                 f"Evaluator result JSON:\n{canonical_json_bytes(evaluation.judgment).decode()}"
             )
@@ -871,6 +872,16 @@ def _messages(prompt_name: PromptName, user_content: str) -> tuple[ModelMessage,
     sections.append(load_prompt_body(prompt_name))
     system = "\n\n".join(sections)
     return ModelMessage(role="system", content=system), ModelMessage(role="user", content=user_content)
+
+
+def _creator_case_context(brief: CaseBrief, brief_text: str) -> str:
+    """Add the exact case evidence-ID namespace to every B/C creator request."""
+    allowed_ids = [item.evidence_id for item in brief.evidence]
+    return (
+        f"Canonical CaseBrief JSON:\n{brief_text}\n\n"
+        f"Claim.evidence_refs contract: {EVIDENCE_REFS_DESCRIPTION}\n"
+        f"Allowed evidence IDs: {canonical_json_bytes(allowed_ids).decode()}"
+    )
 
 
 def _build_evaluator_request(brief_text: str, package: EditorialPackage) -> _EvaluatorRequest:
