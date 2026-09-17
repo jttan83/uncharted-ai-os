@@ -132,10 +132,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"decision: {candidate.submission.decision.value}")
             if candidate.submission.spoken_script is not None:
                 print(f"spoken_script: {candidate.submission.spoken_script}")
-            if candidate.submission.explanation is not None:
-                print(f"explanation: {candidate.submission.explanation}")
-            if candidate.submission.next_action is not None:
-                print(f"next_action: {candidate.submission.next_action}")
         elif args.command == "create-freeze":
             receipt = create_and_persist_freeze(
                 Path.cwd(),

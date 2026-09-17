@@ -454,6 +454,9 @@ def test_execution_review_and_reveal_are_immutable_resumable_and_separated(
     )
     presentation_json = canonical_json_bytes(blind_record).decode()
     assert '"condition"' not in presentation_json
+    assert '"explanation"' not in presentation_json
+    assert '"next_action"' not in presentation_json
+    assert '"run_id"' not in presentation_json
     assert '"mapping"' not in presentation_json
     with pytest.raises(RuntimeError, match="Stage 1"):
         reveal_mapping(

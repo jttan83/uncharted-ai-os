@@ -59,9 +59,15 @@ def test_single_development_case_blinding_and_review_gating() -> None:
 
     assert len(bundle.candidates) == 3
     assert {candidate.position for candidate in bundle.candidates} == {1, 2, 3}
-    assert {candidate.submission for candidate in bundle.candidates} == {
-        submission.normalized for submission in submissions
+    assert {
+        (candidate.submission.decision, candidate.submission.spoken_script)
+        for candidate in bundle.candidates
+    } == {
+        (submission.normalized.decision, submission.normalized.spoken_script)
+        for submission in submissions
     }
+    assert all(not hasattr(candidate.submission, "explanation") for candidate in bundle.candidates)
+    assert all(not hasattr(candidate.submission, "next_action") for candidate in bundle.candidates)
     assert all(candidate.blind_candidate_id not in {"A", "B", "C"} for candidate in bundle.candidates)
     assert not hasattr(bundle, "reveal_mapping")
 

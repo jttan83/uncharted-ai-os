@@ -82,6 +82,56 @@ def test_blind_bundle_has_no_condition_or_evaluator_leak_and_mapping_is_bijectiv
         custodian.reveal(gate)
 
 
+def test_blind_bundle_structurally_excludes_internal_submission_metadata() -> None:
+    case_id = "case_01"
+    submissions = [
+        make_submission(condition, case_id, f"projection_{condition.value.lower()}")
+        for condition in Condition
+    ]
+    internal_explanation = (
+        "Internal orchestration used Condition A, an evaluator, and offline-model in run_projection_a."
+    )
+    submissions[0] = submissions[0].model_copy(
+        update={
+            "normalized": submissions[0].normalized.model_copy(
+                update={
+                    "explanation": internal_explanation,
+                    "next_action": "Retain internal process, cost, and latency metadata for audit.",
+                }
+            )
+        }
+    )
+
+    bundle = build_blind_bundle(
+        submissions,
+        secret_seed=SECRET,
+        position_orders={case_id: tuple(Condition)},
+        bundle_label="projection_test",
+        reveal_custodian=RevealCustodian(),
+    )
+
+    assert submissions[0].normalized.explanation == internal_explanation
+    assert {candidate.submission.spoken_script for candidate in bundle.candidates} == {
+        submission.normalized.spoken_script for submission in submissions
+    }
+    serialized = bundle.model_dump_json()
+    assert '"decision"' in serialized
+    assert submissions[0].normalized.spoken_script in serialized
+    for excluded in (
+        '"explanation"',
+        '"next_action"',
+        '"condition"',
+        '"run_id"',
+        "evaluator",
+        "orchestration",
+        "offline-model",
+        '"max_cost"',
+        '"latency_ms"',
+        "process metadata",
+    ):
+        assert excluded not in serialized.lower()
+
+
 def test_reveal_map_requires_complete_condition_set_per_case() -> None:
     with pytest.raises(ValueError, match="exactly one A, B, and C"):
         RevealMapping(

@@ -8,6 +8,7 @@ from .canonical import canonical_digest, canonical_json_bytes
 from .contracts import (
     BlindCandidate,
     BlindReviewBundle,
+    BlindReviewSubmission,
     CaseBrief,
     ConditionSubmission,
     EditorialPackage,
@@ -22,6 +23,7 @@ from .contracts import (
 __all__ = [
     "BlindCandidate",
     "BlindReviewBundle",
+    "BlindReviewSubmission",
     "CaseBrief",
     "ConditionSubmission",
     "EditorialPackage",

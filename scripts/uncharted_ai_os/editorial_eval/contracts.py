@@ -665,6 +665,27 @@ class NormalizedSubmission(StrictModel):
         return self
 
 
+class BlindReviewSubmission(StrictModel):
+    """Reviewer-visible projection with no workflow or process explanation."""
+
+    decision: NormalizedDecision
+    spoken_script: Text | None = None
+
+    @model_validator(mode="after")
+    def validate_surface(self) -> BlindReviewSubmission:
+        has_candidate = self.decision in {
+            NormalizedDecision.PROCEED_CANDIDATE,
+            NormalizedDecision.EDITORIAL_REVISION_REQUIRED,
+        }
+        if has_candidate and self.spoken_script is None:
+            msg = "blind candidate decisions require a spoken script"
+            raise ValueError(msg)
+        if not has_candidate and self.spoken_script is not None:
+            msg = "blind non-candidate decisions must omit the script"
+            raise ValueError(msg)
+        return self
+
+
 class ConditionSubmission(StrictModel):
     schema_version: Literal[SUBMISSION_SCHEMA_VERSION] = SUBMISSION_SCHEMA_VERSION
     run_id: Identifier
@@ -815,7 +836,7 @@ class BlindCandidate(StrictModel):
     blind_candidate_id: Identifier
     case_id: Identifier
     position: int = Field(ge=1, le=3)
-    submission: NormalizedSubmission
+    submission: BlindReviewSubmission
 
 
 class RevealEntry(StrictModel):

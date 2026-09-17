@@ -13,6 +13,7 @@ from .canonical import canonical_digest
 from .contracts import (
     BlindCandidate,
     BlindReviewBundle,
+    BlindReviewSubmission,
     Condition,
     ConditionSubmission,
     HumanReview,
@@ -161,7 +162,10 @@ def build_blind_bundle(
                     blind_candidate_id=candidate_id,
                     case_id=case_id,
                     position=position,
-                    submission=submission.normalized,
+                    submission=BlindReviewSubmission(
+                        decision=submission.normalized.decision,
+                        spoken_script=submission.normalized.spoken_script,
+                    ),
                 )
             )
             reveal_entries.append(
@@ -181,12 +185,8 @@ def build_blind_bundle(
 
 
 def assert_blind_safe_submission(submission: ConditionSubmission) -> None:
-    """Flag identity-bearing model text instead of silently rewriting it."""
-    fields = {
-        "spoken_script": submission.normalized.spoken_script,
-        "explanation": submission.normalized.explanation,
-        "next_action": submission.normalized.next_action,
-    }
+    """Fail closed when reviewer-visible script text exposes treatment identity."""
+    fields = {"spoken_script": submission.normalized.spoken_script}
     identifiers = {
         identifier.casefold()
         for call in submission.trace.calls
