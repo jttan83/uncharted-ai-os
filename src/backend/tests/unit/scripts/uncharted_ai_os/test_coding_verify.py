@@ -42,6 +42,7 @@ class CodingVerifyTest(unittest.TestCase):
         )
 
     def test_success_appends_to_original_task_without_completing_it(self) -> None:
+        (self.repo / "work.txt").write_text("work in progress\n", encoding="utf-8")
         result = self.run_cli(f"{sys.executable} -c 'import sys; sys.exit(0)'")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["result"], "checks_passed")
@@ -49,7 +50,23 @@ class CodingVerifyTest(unittest.TestCase):
         self.assertTrue(content.startswith("Original task text.\n"))
         self.assertIn("checks passed; review required", content)
         self.assertIn("Git branch: task/TASK-57", content)
+        self.assertIn("Uncommitted changes: yes", content)
+
+    def test_no_change_run_reports_no_changes_and_exits_nonzero(self) -> None:
+        result = self.run_cli(f"{sys.executable} -c 'import sys; sys.exit(0)'")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["result"], "no_changes")
+        content = self.task.read_text(encoding="utf-8")
+        self.assertTrue(content.startswith("Original task text.\n"))
+        self.assertIn("no changes detected; nothing to verify", content)
         self.assertIn("Uncommitted changes: no", content)
+
+    def test_file_change_run_reports_checks_passed(self) -> None:
+        (self.repo / "work.txt").write_text("work in progress\n", encoding="utf-8")
+        result = self.run_cli(f"{sys.executable} -c 'import sys; sys.exit(0)'")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["result"], "checks_passed")
+        self.assertIn("checks passed; review required", self.task.read_text(encoding="utf-8"))
 
     def test_failure_is_recorded_without_leaking_check_output(self) -> None:
         result = self.run_cli(f"{sys.executable} -c 'import sys; print(\"secret\"); sys.exit(1)'")

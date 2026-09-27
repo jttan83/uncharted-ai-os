@@ -3,6 +3,11 @@
 
 This helper does not invoke a model, commit, push, or mark a task complete.
 Check output is suppressed because tools may emit credentials or customer data.
+
+A run is reported as ``checks_passed`` only when every check passes *and* the
+git working tree contains changes to verify. If every check passes but the
+working tree is clean, the run is reported as ``no_changes`` and the process
+exits nonzero so an empty verification cannot be mistaken for real work.
 """
 
 from __future__ import annotations
@@ -81,8 +86,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         if status.returncode != 0:
             raise PreflightError("git status failed")
+        has_changes = bool(status.stdout.strip())
+
         results = verify(repo, args.check)
-        passed = all(result["passed"] for result in results)
+        checks_passed = all(result["passed"] for result in results)
+
+        if not checks_passed:
+            outcome = "checks_failed"
+            result_line = "checks failed; repair or escalate"
+        elif not has_changes:
+            outcome = "no_changes"
+            result_line = "no changes detected; nothing to verify"
+        else:
+            outcome = "checks_passed"
+            result_line = "checks passed; review required"
+
         lines = [
             "",
             "## Coding verification",
@@ -90,12 +108,8 @@ def main(argv: list[str] | None = None) -> int:
             f"- Executor: {args.executor}",
             f"- Git branch: {branch}",
             f"- Git HEAD: {commit}",
-            f"- Uncommitted changes: {'yes' if status.stdout else 'no'}",
-            (
-                "- Result: checks passed; review required"
-                if passed
-                else "- Result: checks failed; repair or escalate"
-            ),
+            f"- Uncommitted changes: {'yes' if has_changes else 'no'}",
+            f"- Result: {result_line}",
             *(
                 f"- {result['name']}: {'pass' if result['passed'] else 'fail'}"
                 for result in results
@@ -112,10 +126,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(json.dumps({
         "task_id": args.task_id,
-        "result": "checks_passed" if passed else "checks_failed",
+        "result": outcome,
         "checks": results,
     }))
-    return 0 if passed else 1
+    return 0 if outcome == "checks_passed" else 1
 
 
 if __name__ == "__main__":
